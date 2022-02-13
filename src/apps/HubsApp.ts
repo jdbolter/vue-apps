@@ -7,8 +7,8 @@ import VueApp  from "./VueApp"
 
 // create init method for ethereal
 //import * as ethereal from 'ethereal'
-import { createPrinter, ThisExpression, ThrowStatement } from "node_modules/typescript/lib/typescript";
-import { create } from "mathjs";
+// import { createPrinter, ThisExpression, ThrowStatement } from "node_modules/typescript/lib/typescript";
+// import { create } from "mathjs";
 
 export function initializeEthereal() {
     HubsApp.initializeEthereal()
@@ -65,6 +65,8 @@ export default class HubsApp extends VueApp {
 
     private updateTime: number
     private raycaster: THREE.Raycaster
+
+    tempV: THREE.Vector3 = new THREE.Vector3()
 
     size: {
         width: number,
@@ -129,8 +131,6 @@ export default class HubsApp extends VueApp {
     }
 
     constructor (App: Component, width: number, height: number, params: any = {}, createOptions: any ={}) {
-        
-
         if (params.width && params.height && params.width > 0 && params.height > 0) {
             // reset both
             width = params.width   
@@ -251,8 +251,10 @@ export default class HubsApp extends VueApp {
         if (!this.isInteractive) { return }
         
         const obj = evt.object3D
-        this.raycaster.ray.set(obj.position, 
-            this.webLayer3D!.getWorldDirection(new THREE.Vector3()).negate())
+        const dir = this.webLayer3D!.getWorldDirection(new THREE.Vector3()).negate()
+        this.tempV.copy(obj.position)
+        this.tempV.addScaledVector(dir, -0.1)
+        this.raycaster.ray.set(this.tempV, dir)
         const hit = this.webLayer3D!.hitTest(this.raycaster.ray)
         if (hit) {
           hit.target.click()
@@ -278,7 +280,29 @@ export default class HubsApp extends VueApp {
     }
 
     destroy() {
-        // TODO: destroy the vue component and any resources, etc., it has
+        //  clean up weblayer
+        if (this.vueRoot && this.vueRoot.$el) {
+            let parent = this.vueRoot.$el.parentElement
+            parent ? parent.removeChild(this.vueRoot.$el) : null
+        }
+
+        if (this.headDiv) {
+            let parent = this.headDiv.parentElement
+            parent ? parent.removeChild(this.headDiv) : null
+        }
+
+        if (this.webLayer3D) {
+            let parent = (this.webLayer3D.rootLayer.element.getRootNode() as ShadowRoot).host;
+            parent ? parent.remove() : null
+            
+            this.webLayer3D.removeFromParent()
+            this.webLayer3D.rootLayer.dispose()
+            // this.webLayer3D = null
+        }
+
+        this.vueApp.unmount()
+        // this.vueRoot = null
+        // this.vueApp = null
     }
 
     tick(time: number) {
