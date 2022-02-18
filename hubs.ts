@@ -93,6 +93,7 @@ import AudioPad from './src/apps/AudioPad/hubs'
 import Label from './src/apps/Label/hubs'
 import Label_lg from './src/apps/Label_lg_text/hubs'
 import Title from './src/apps/Title/hubs'
+import Center_Map from './src/apps/Space/Center_Map/hubs'
 
 export {
     // for updating ethereal once per tick
@@ -114,7 +115,7 @@ export {
     // Portal titles
     PortalTitle, PortalSubtitle,
     // Tests
-    hubsTest1, hubsTest2, hubsTest3}
+    hubsTest1, hubsTest2, hubsTest3,Center_Map}
 
 
 
