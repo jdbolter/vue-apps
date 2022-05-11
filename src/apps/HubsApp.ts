@@ -20,6 +20,15 @@ export function systemTick(time: number, deltaTime: number) {
    HubsApp.systemTick(time, deltaTime)
 }
 
+export async function loadCache(url: string) {
+    await WebLayerManager.instance.importCache(url)
+}
+
+export async function exportCache(states: Array<string> | undefined) {
+    await WebLayerManager.instance.saveStore()
+    return await WebLayerManager.instance.exportCache(states)
+}
+
 function copyCamera(source: THREE.PerspectiveCamera, target: THREE.PerspectiveCamera) {
     source.updateMatrixWorld()
     //let oldName = target.name
@@ -85,9 +94,14 @@ export default class HubsApp extends VueApp {
 
     headDiv: Element
 
+    readyPromise: Promise<void> | null = null
+
     static initializeEthereal() {
         let scene: Scene = window.APP.scene;
         WebLayerManager.initialize(scene.renderer)
+
+        // WebLayerManager.instance.MAX_RASTERIZE_TASK_COUNT = 25;
+        // WebLayerManager.instance.MAX_SERIALIZE_TASK_COUNT = 25;
 
         // this.etherealCamera.matrixAutoUpdate = true;
         //this.etherealCamera.visible = false;
@@ -157,23 +171,22 @@ export default class HubsApp extends VueApp {
         this.isStatic = true;
         this.updateTime = 100
         this.raycaster = new THREE.Raycaster()
-        //this.width = width
-        //this.height = height
         this.size = { width: width/1000, height: height/1000}
-        //this.takeOwnership = this.takeOwnershipProto.bind(this)
-        //this.setSharedData = this.setSharedDataProto.bind(this)
 
         this.headDiv = document.createElement("div")
-        //this.headDiv.setAttribute("style","width: 100%;height: 100%;")
-
-        //this.vueApp = createApp(App, createOptions)
     }
 
-    async mount(useEthereal?: boolean) {
+    mount(useEthereal?: boolean) {
         this.isEthereal = useEthereal === true
         
         this.vueRoot = this.vueApp.mount(this.headDiv);
-        this.vueRoot.$el.setAttribute("style","width: " + this.width + "px; height: " + this.height + "px;")
+
+        var style = ""
+        this.width > 0 ? style = "width: " + this.width + "px; " : style = "width: fit-content; "
+        this.height > 0 ? style = style + "height: " + this.height + "px;" : style = style + "height: fit-content;"
+
+        console.log("setting style: ", style)
+        this.vueRoot.$el.setAttribute("style", style)
 
         // // add a link to the shared css
         let l = document.createElement("link")
@@ -183,7 +196,7 @@ export default class HubsApp extends VueApp {
         this.vueRoot.$el.insertBefore(l, this.vueRoot.$el.firstChild)
 
         // move this into method
-        this.webLayer3D = new WebContainer3D(this.vueRoot.$el, {
+        this.webLayer3D = new WebContainer3D(this.vueRoot?.$el, {
             autoRefresh: true,
             onLayerCreate: useEthereal ? 
             (layer) => {
@@ -199,12 +212,37 @@ export default class HubsApp extends VueApp {
             //textureEncoding: THREE.sRGBEncoding,
             renderOrderOffset: 0
         });
-        try {
-            await this.webLayer3D.updateUntilReady()
-            this.webLayer3D.rootLayer.setNeedsRefresh();
-        } catch (e) {
-            console.error("webLayerUpdate failed. ", e)
-        }
+
+        // make sure the CSS has been loaded before we do 
+        // anything else
+        const createOnLoadPromise = (htmlElement: HTMLElement) =>
+            new Promise((resolve) => {
+                htmlElement.onload = resolve;
+            });
+        
+        this.readyPromise = createOnLoadPromise(l).then(() => {
+            let rect = this.vueRoot?.$el.getBoundingClientRect()
+            console.log("mounted has rect: ", rect)
+
+            this.height = this.height > 0 ? this.height : Math.ceil(rect.height*1.0)
+            this.width = this.width > 0 ? this.width : Math.ceil(rect.width*1.0)
+            this.size = { width: this.width/1000, height: this.height/1000}
+
+            style = "width: " + this.width + "px; height: " + this.height + "px;"
+            console.log("setting style: ", style)
+            this.vueRoot?.$el.setAttribute("style", style)
+            this.webLayer3D?.rootLayer.setNeedsRefresh();
+        })
+    }
+
+    async waitForReady() {
+        this.webLayer3D?.rootLayer.setNeedsRefresh();
+        await this.readyPromise
+        await this.webLayer3D?.updateUntilReady().then(() => {
+            this.webLayer3D?.rootLayer.setNeedsRefresh();
+        }).catch((err) => {
+            console.error("WebLayerUpdate failed: ", err)
+        })
     }
 
     setNetworkMethods(takeOwnership: () => boolean, setSharedData: ({}) => boolean) {
@@ -313,19 +351,49 @@ export default class HubsApp extends VueApp {
         } else {
             var needsUpdate = this.needsUpdate
             this.needsUpdate = false
-            if (this.isStatic && this.updateTime < time) {
-                needsUpdate = true
-                // wait a bit and do it again.  May get rid of this some day, we'll see
-                this.updateTime = Math.random() * 2000 + 1000;
-            }
+            // if (this.isStatic && this.updateTime < time) {
+            //     needsUpdate = true
+            //     // wait a bit and do it again.  May get rid of this some day, we'll see
+            //     this.updateTime = Math.random() * 2000 + 1000;
+            // }
 
-            if (!this.isStatic) {
+            // if (!this.isStatic) {
                 this.updateTime = time
                 needsUpdate = true
-            }
+           // }
             if (needsUpdate) {
                 this.webLayer3D!.update();
             }
         }
     }
 }
+
+async function logAndFollow(id: string | null, url: string) {
+    //@ts-ignore
+    await window.APP.scene.systems["data-logging"].logClick(id, url);
+    
+    if (url.length > 0) {
+        window.open(url, "_blank");
+    }
+}
+
+//@ts-ignore
+window.APP.utils.followLinkClick = function (event: MouseEvent) {
+    // Get url from the target element (<a>) href attribute
+    var url: string = "";
+    event.preventDefault();
+
+    if (event.target instanceof HTMLElement) {
+        if (event.target instanceof HTMLAnchorElement) {
+            url = (event.target as HTMLAnchorElement).href;
+            // Prevent default action (e.g. following the link)
+        } else if (event.target instanceof HTMLSpanElement) {
+            let child = event.target.childNodes[0]
+            if (child instanceof HTMLAnchorElement) {
+                url = (child as HTMLAnchorElement).href;;
+            }
+        }
+        logAndFollow(event.target.id, url);
+    }
+}
+

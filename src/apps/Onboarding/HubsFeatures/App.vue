@@ -6,9 +6,10 @@
 <Title msg="Features in Hubs" />
 <br>
 	<div class="squareoff"> The figure below indicates how to mute your microphone, take photos, share your screen, create media objects, and so on: </div> 
-    <br><br>
-    <img src="../../../assets/images/Onboarding/hubs-user-interface.jpg" width="400" >
-
+      <br><br>
+     <div xr-layer>
+       <img  src="../../../assets/images/Onboarding/hubs-user-interface2.jpg" height="212">
+     </div>
   </div>
   </div>
   </div> 
