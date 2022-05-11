@@ -1,22 +1,19 @@
 <template>
   <div> 
-  <div id="room" class="lightwall">
-   <div class="headline squareoff" style="color:white">15th century</div>
-   <br />
-   <br />
- <div class="spacer-side">
-
-  <Title msg="Linear Perspective" />
-  <br>
+  <div id="room" class="ivorywall"> 
+  <div style="padding-top: 10px">
+  <div class="history_spacer-side">
+  <Title class="history_title" msg="Linear Perspective" />
+  
+  <p class="history_year">1430s</p>
+  <hr class="history_hr">
+  <br/>
+  
 <div class="squareoff">
-Linear perspective is a system developed by architects and painters to create an illusion of depth on a flat surface. Around 1425, Italian Renaissance architect Filippo Brunelleschi demonstrated how it could make painting as realistic. Using the technique of parallel lines converging in a single vanishing point and a mirror, he painted the Florence Baptistry.
+Linear perspective is a system developed by architects and painters to create an illusion of depth on a flat surface using the vanishing points. This technique resembles the way we see the world, as it imitates how rays of light reflects off objects in the world and could be focused on a surface.
+</div>
 	</div>
-  <br>
-
-  <div xr-layer>
-      <img class="centerImg" height="200" src="../../../assets/images/History/LinearPerspective.jpg"></div>
-  
-  
+  <br />
   </div>
   </div> 
   </div>
