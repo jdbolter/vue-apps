@@ -1,10 +1,826 @@
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+var __require = typeof require !== "undefined" ? require : (x) => {
+  throw new Error('Dynamic require of "' + x + '" is not supported');
+};
 var __publicField = (obj, key, value) => {
   __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
   return value;
 };
-import { Matrix4, Vector3, Object3D, PlaneGeometry, Mesh, MeshBasicMaterial, DoubleSide, VideoTexture, CanvasTexture, TextureLoader, ClampToEdgeWrapping, LinearFilter, MeshDepthMaterial, RGBADepthPacking, RGBAFormat, RGBA_ASTC_4x4_Format, RGBA_BPTC_Format, RGBA_ETC2_EAC_Format, RGBA_PVRTC_4BPPV1_Format, RGBA_S3TC_DXT5_Format, RGB_ETC1_Format, RGB_ETC2_Format, RGB_PVRTC_4BPPV1_Format, RGB_S3TC_DXT1_Format, Loader, FileLoader, CompressedTexture, UnsignedByteType, LinearMipmapLinearFilter, sRGBEncoding, LinearEncoding } from "three";
+import { Matrix4, Vector3, Object3D, PlaneGeometry, Mesh, MeshBasicMaterial, DoubleSide, VideoTexture, ClampToEdgeWrapping, LinearFilter, MeshDepthMaterial, RGBADepthPacking } from "three";
+const EMPTY_OBJ = {};
+const NOOP = () => {
+};
+const extend$1 = Object.assign;
+const remove = (arr, el) => {
+  const i = arr.indexOf(el);
+  if (i > -1) {
+    arr.splice(i, 1);
+  }
+};
+const isArray$1 = Array.isArray;
+const isMap = (val) => toTypeString(val) === "[object Map]";
+const isSet = (val) => toTypeString(val) === "[object Set]";
+const isFunction = (val) => typeof val === "function";
+const isString = (val) => typeof val === "string";
+const isSymbol = (val) => typeof val === "symbol";
+const isObject = (val) => val !== null && typeof val === "object";
+const isPromise = (val) => {
+  return isObject(val) && isFunction(val.then) && isFunction(val.catch);
+};
+const objectToString = Object.prototype.toString;
+const toTypeString = (value) => objectToString.call(value);
+const isPlainObject = (val) => toTypeString(val) === "[object Object]";
+const hasChanged = (value, oldValue) => !Object.is(value, oldValue);
+const def = (obj, key, value) => {
+  Object.defineProperty(obj, key, {
+    configurable: true,
+    enumerable: false,
+    value
+  });
+};
+let activeEffectScope;
+function recordEffectScope(effect, scope) {
+  scope = scope || activeEffectScope;
+  if (scope && scope.active) {
+    scope.effects.push(effect);
+  }
+}
+const wasTracked = (dep) => (dep.w & trackOpBit) > 0;
+const newTracked = (dep) => (dep.n & trackOpBit) > 0;
+const initDepMarkers = ({ deps }) => {
+  if (deps.length) {
+    for (let i = 0; i < deps.length; i++) {
+      deps[i].w |= trackOpBit;
+    }
+  }
+};
+const finalizeDepMarkers = (effect) => {
+  const { deps } = effect;
+  if (deps.length) {
+    let ptr = 0;
+    for (let i = 0; i < deps.length; i++) {
+      const dep = deps[i];
+      if (wasTracked(dep) && !newTracked(dep)) {
+        dep.delete(effect);
+      } else {
+        deps[ptr++] = dep;
+      }
+      dep.w &= ~trackOpBit;
+      dep.n &= ~trackOpBit;
+    }
+    deps.length = ptr;
+  }
+};
+let effectTrackDepth = 0;
+let trackOpBit = 1;
+const maxMarkerBits = 30;
+const effectStack = [];
+let activeEffect;
+class ReactiveEffect {
+  constructor(fn, scheduler2 = null, scope) {
+    this.fn = fn;
+    this.scheduler = scheduler2;
+    this.active = true;
+    this.deps = [];
+    recordEffectScope(this, scope);
+  }
+  run() {
+    if (!this.active) {
+      return this.fn();
+    }
+    if (!effectStack.includes(this)) {
+      try {
+        effectStack.push(activeEffect = this);
+        enableTracking();
+        trackOpBit = 1 << ++effectTrackDepth;
+        if (effectTrackDepth <= maxMarkerBits) {
+          initDepMarkers(this);
+        } else {
+          cleanupEffect(this);
+        }
+        return this.fn();
+      } finally {
+        if (effectTrackDepth <= maxMarkerBits) {
+          finalizeDepMarkers(this);
+        }
+        trackOpBit = 1 << --effectTrackDepth;
+        resetTracking();
+        effectStack.pop();
+        const n = effectStack.length;
+        activeEffect = n > 0 ? effectStack[n - 1] : void 0;
+      }
+    }
+  }
+  stop() {
+    if (this.active) {
+      cleanupEffect(this);
+      if (this.onStop) {
+        this.onStop();
+      }
+      this.active = false;
+    }
+  }
+}
+function cleanupEffect(effect) {
+  const { deps } = effect;
+  if (deps.length) {
+    for (let i = 0; i < deps.length; i++) {
+      deps[i].delete(effect);
+    }
+    deps.length = 0;
+  }
+}
+let shouldTrack = true;
+const trackStack = [];
+function pauseTracking() {
+  trackStack.push(shouldTrack);
+  shouldTrack = false;
+}
+function enableTracking() {
+  trackStack.push(shouldTrack);
+  shouldTrack = true;
+}
+function resetTracking() {
+  const last = trackStack.pop();
+  shouldTrack = last === void 0 ? true : last;
+}
+new Set(Object.getOwnPropertyNames(Symbol).map((key) => Symbol[key]).filter(isSymbol));
+function isReactive(value) {
+  if (isReadonly(value)) {
+    return isReactive(value["__v_raw"]);
+  }
+  return !!(value && value["__v_isReactive"]);
+}
+function isReadonly(value) {
+  return !!(value && value["__v_isReadonly"]);
+}
+function toRaw(observed) {
+  const raw = observed && observed["__v_raw"];
+  return raw ? toRaw(raw) : observed;
+}
+function markRaw(value) {
+  def(value, "__v_skip", true);
+  return value;
+}
+function isRef(r) {
+  return Boolean(r && r.__v_isRef === true);
+}
+function unref(ref) {
+  return isRef(ref) ? ref.value : ref;
+}
+const shallowUnwrapHandlers = {
+  get: (target, key, receiver) => unref(Reflect.get(target, key, receiver)),
+  set: (target, key, value, receiver) => {
+    const oldValue = target[key];
+    if (isRef(oldValue) && !isRef(value)) {
+      oldValue.value = value;
+      return true;
+    } else {
+      return Reflect.set(target, key, value, receiver);
+    }
+  }
+};
+function proxyRefs(objectWithRefs) {
+  return isReactive(objectWithRefs) ? objectWithRefs : new Proxy(objectWithRefs, shallowUnwrapHandlers);
+}
+Promise.resolve();
+let currentScopeId = null;
+function pushScopeId(id) {
+  currentScopeId = id;
+}
+function popScopeId() {
+  currentScopeId = null;
+}
+function queueEffectWithSuspense(fn, suspense) {
+  if (suspense && suspense.pendingBranch) {
+    if (isArray$1(fn)) {
+      suspense.effects.push(...fn);
+    } else {
+      suspense.effects.push(fn);
+    }
+  } else {
+    queuePostFlushCb(fn);
+  }
+}
+function resolveMergedOptions(instance) {
+  const base = instance.type;
+  const { mixins, extends: extendsOptions } = base;
+  const { mixins: globalMixins, optionsCache: cache2, config: { optionMergeStrategies } } = instance.appContext;
+  const cached = cache2.get(base);
+  let resolved;
+  if (cached) {
+    resolved = cached;
+  } else if (!globalMixins.length && !mixins && !extendsOptions) {
+    {
+      resolved = base;
+    }
+  } else {
+    resolved = {};
+    if (globalMixins.length) {
+      globalMixins.forEach((m) => mergeOptions(resolved, m, optionMergeStrategies, true));
+    }
+    mergeOptions(resolved, base, optionMergeStrategies);
+  }
+  cache2.set(base, resolved);
+  return resolved;
+}
+function mergeOptions(to, from, strats, asMixin = false) {
+  const { mixins, extends: extendsOptions } = from;
+  if (extendsOptions) {
+    mergeOptions(to, extendsOptions, strats, true);
+  }
+  if (mixins) {
+    mixins.forEach((m) => mergeOptions(to, m, strats, true));
+  }
+  for (const key in from) {
+    if (asMixin && key === "expose")
+      ;
+    else {
+      const strat = internalOptionMergeStrats[key] || strats && strats[key];
+      to[key] = strat ? strat(to[key], from[key]) : from[key];
+    }
+  }
+  return to;
+}
+const internalOptionMergeStrats = {
+  data: mergeDataFn,
+  props: mergeObjectOptions,
+  emits: mergeObjectOptions,
+  methods: mergeObjectOptions,
+  computed: mergeObjectOptions,
+  beforeCreate: mergeAsArray,
+  created: mergeAsArray,
+  beforeMount: mergeAsArray,
+  mounted: mergeAsArray,
+  beforeUpdate: mergeAsArray,
+  updated: mergeAsArray,
+  beforeDestroy: mergeAsArray,
+  beforeUnmount: mergeAsArray,
+  destroyed: mergeAsArray,
+  unmounted: mergeAsArray,
+  activated: mergeAsArray,
+  deactivated: mergeAsArray,
+  errorCaptured: mergeAsArray,
+  serverPrefetch: mergeAsArray,
+  components: mergeObjectOptions,
+  directives: mergeObjectOptions,
+  watch: mergeWatchOptions,
+  provide: mergeDataFn,
+  inject: mergeInject
+};
+function mergeDataFn(to, from) {
+  if (!from) {
+    return to;
+  }
+  if (!to) {
+    return from;
+  }
+  return function mergedDataFn() {
+    return extend$1(isFunction(to) ? to.call(this, this) : to, isFunction(from) ? from.call(this, this) : from);
+  };
+}
+function mergeInject(to, from) {
+  return mergeObjectOptions(normalizeInject(to), normalizeInject(from));
+}
+function normalizeInject(raw) {
+  if (isArray$1(raw)) {
+    const res = {};
+    for (let i = 0; i < raw.length; i++) {
+      res[raw[i]] = raw[i];
+    }
+    return res;
+  }
+  return raw;
+}
+function mergeAsArray(to, from) {
+  return to ? [...new Set([].concat(to, from))] : from;
+}
+function mergeObjectOptions(to, from) {
+  return to ? extend$1(extend$1(Object.create(null), to), from) : from;
+}
+function mergeWatchOptions(to, from) {
+  if (!to)
+    return from;
+  if (!from)
+    return to;
+  const merged = extend$1(Object.create(null), to);
+  for (const key in from) {
+    merged[key] = mergeAsArray(to[key], from[key]);
+  }
+  return merged;
+}
+const queuePostRenderEffect = queueEffectWithSuspense;
+const getPublicInstance = (i) => {
+  if (!i)
+    return null;
+  if (isStatefulComponent(i))
+    return getExposeProxy(i) || i.proxy;
+  return getPublicInstance(i.parent);
+};
+const publicPropertiesMap = extend$1(Object.create(null), {
+  $: (i) => i,
+  $el: (i) => i.vnode.el,
+  $data: (i) => i.data,
+  $props: (i) => i.props,
+  $attrs: (i) => i.attrs,
+  $slots: (i) => i.slots,
+  $refs: (i) => i.refs,
+  $parent: (i) => getPublicInstance(i.parent),
+  $root: (i) => getPublicInstance(i.root),
+  $emit: (i) => i.emit,
+  $options: (i) => resolveMergedOptions(i),
+  $forceUpdate: (i) => () => queueJob(i.update),
+  $nextTick: (i) => nextTick.bind(i.proxy),
+  $watch: (i) => instanceWatch.bind(i)
+});
+let currentInstance = null;
+const setCurrentInstance = (instance) => {
+  currentInstance = instance;
+  instance.scope.on();
+};
+const unsetCurrentInstance = () => {
+  currentInstance && currentInstance.scope.off();
+  currentInstance = null;
+};
+function isStatefulComponent(instance) {
+  return instance.vnode.shapeFlag & 4;
+}
+function getExposeProxy(instance) {
+  if (instance.exposed) {
+    return instance.exposeProxy || (instance.exposeProxy = new Proxy(proxyRefs(markRaw(instance.exposed)), {
+      get(target, key) {
+        if (key in target) {
+          return target[key];
+        } else if (key in publicPropertiesMap) {
+          return publicPropertiesMap[key](instance);
+        }
+      }
+    }));
+  }
+}
+const classifyRE = /(?:^|[-_])(\w)/g;
+const classify = (str) => str.replace(classifyRE, (c) => c.toUpperCase()).replace(/[-_]/g, "");
+function getComponentName(Component) {
+  return isFunction(Component) ? Component.displayName || Component.name : Component.name;
+}
+function formatComponentName(instance, Component, isRoot = false) {
+  let name = getComponentName(Component);
+  if (!name && Component.__file) {
+    const match = Component.__file.match(/([^/\\]+)\.\w+$/);
+    if (match) {
+      name = match[1];
+    }
+  }
+  if (!name && instance && instance.parent) {
+    const inferFromRegistry = (registry) => {
+      for (const key in registry) {
+        if (registry[key] === Component) {
+          return key;
+        }
+      }
+    };
+    name = inferFromRegistry(instance.components || instance.parent.type.components) || inferFromRegistry(instance.appContext.components);
+  }
+  return name ? classify(name) : isRoot ? `App` : `Anonymous`;
+}
+const stack = [];
+function warn(msg2, ...args) {
+  pauseTracking();
+  const instance = stack.length ? stack[stack.length - 1].component : null;
+  const appWarnHandler = instance && instance.appContext.config.warnHandler;
+  const trace = getComponentTrace();
+  if (appWarnHandler) {
+    callWithErrorHandling(appWarnHandler, instance, 11, [
+      msg2 + args.join(""),
+      instance && instance.proxy,
+      trace.map(({ vnode }) => `at <${formatComponentName(instance, vnode.type)}>`).join("\n"),
+      trace
+    ]);
+  } else {
+    const warnArgs = [`[Vue warn]: ${msg2}`, ...args];
+    if (trace.length && true) {
+      warnArgs.push(`
+`, ...formatTrace(trace));
+    }
+    console.warn(...warnArgs);
+  }
+  resetTracking();
+}
+function getComponentTrace() {
+  let currentVNode = stack[stack.length - 1];
+  if (!currentVNode) {
+    return [];
+  }
+  const normalizedStack = [];
+  while (currentVNode) {
+    const last = normalizedStack[0];
+    if (last && last.vnode === currentVNode) {
+      last.recurseCount++;
+    } else {
+      normalizedStack.push({
+        vnode: currentVNode,
+        recurseCount: 0
+      });
+    }
+    const parentInstance = currentVNode.component && currentVNode.component.parent;
+    currentVNode = parentInstance && parentInstance.vnode;
+  }
+  return normalizedStack;
+}
+function formatTrace(trace) {
+  const logs = [];
+  trace.forEach((entry, i) => {
+    logs.push(...i === 0 ? [] : [`
+`], ...formatTraceEntry(entry));
+  });
+  return logs;
+}
+function formatTraceEntry({ vnode, recurseCount }) {
+  const postfix = recurseCount > 0 ? `... (${recurseCount} recursive calls)` : ``;
+  const isRoot = vnode.component ? vnode.component.parent == null : false;
+  const open = ` at <${formatComponentName(vnode.component, vnode.type, isRoot)}`;
+  const close = `>` + postfix;
+  return vnode.props ? [open, ...formatProps(vnode.props), close] : [open + close];
+}
+function formatProps(props2) {
+  const res = [];
+  const keys2 = Object.keys(props2);
+  keys2.slice(0, 3).forEach((key) => {
+    res.push(...formatProp(key, props2[key]));
+  });
+  if (keys2.length > 3) {
+    res.push(` ...`);
+  }
+  return res;
+}
+function formatProp(key, value, raw) {
+  if (isString(value)) {
+    value = JSON.stringify(value);
+    return raw ? value : [`${key}=${value}`];
+  } else if (typeof value === "number" || typeof value === "boolean" || value == null) {
+    return raw ? value : [`${key}=${value}`];
+  } else if (isRef(value)) {
+    value = formatProp(key, toRaw(value.value), true);
+    return raw ? value : [`${key}=Ref<`, value, `>`];
+  } else if (isFunction(value)) {
+    return [`${key}=fn${value.name ? `<${value.name}>` : ``}`];
+  } else {
+    value = toRaw(value);
+    return raw ? value : [`${key}=`, value];
+  }
+}
+function callWithErrorHandling(fn, instance, type2, args) {
+  let res;
+  try {
+    res = args ? fn(...args) : fn();
+  } catch (err) {
+    handleError(err, instance, type2);
+  }
+  return res;
+}
+function callWithAsyncErrorHandling(fn, instance, type2, args) {
+  if (isFunction(fn)) {
+    const res = callWithErrorHandling(fn, instance, type2, args);
+    if (res && isPromise(res)) {
+      res.catch((err) => {
+        handleError(err, instance, type2);
+      });
+    }
+    return res;
+  }
+  const values = [];
+  for (let i = 0; i < fn.length; i++) {
+    values.push(callWithAsyncErrorHandling(fn[i], instance, type2, args));
+  }
+  return values;
+}
+function handleError(err, instance, type2, throwInDev = true) {
+  const contextVNode = instance ? instance.vnode : null;
+  if (instance) {
+    let cur = instance.parent;
+    const exposedInstance = instance.proxy;
+    const errorInfo = type2;
+    while (cur) {
+      const errorCapturedHooks = cur.ec;
+      if (errorCapturedHooks) {
+        for (let i = 0; i < errorCapturedHooks.length; i++) {
+          if (errorCapturedHooks[i](err, exposedInstance, errorInfo) === false) {
+            return;
+          }
+        }
+      }
+      cur = cur.parent;
+    }
+    const appErrorHandler = instance.appContext.config.errorHandler;
+    if (appErrorHandler) {
+      callWithErrorHandling(appErrorHandler, null, 10, [err, exposedInstance, errorInfo]);
+      return;
+    }
+  }
+  logError(err, type2, contextVNode, throwInDev);
+}
+function logError(err, type2, contextVNode, throwInDev = true) {
+  {
+    console.error(err);
+  }
+}
+let isFlushing = false;
+let isFlushPending = false;
+const queue = [];
+let flushIndex = 0;
+const pendingPreFlushCbs = [];
+let activePreFlushCbs = null;
+let preFlushIndex = 0;
+const pendingPostFlushCbs = [];
+let activePostFlushCbs = null;
+let postFlushIndex = 0;
+const resolvedPromise = Promise.resolve();
+let currentFlushPromise = null;
+let currentPreFlushParentJob = null;
+const RECURSION_LIMIT = 100;
+function nextTick(fn) {
+  const p = currentFlushPromise || resolvedPromise;
+  return fn ? p.then(this ? fn.bind(this) : fn) : p;
+}
+function findInsertionIndex(id) {
+  let start = flushIndex + 1;
+  let end = queue.length;
+  while (start < end) {
+    const middle = start + end >>> 1;
+    const middleJobId = getId(queue[middle]);
+    middleJobId < id ? start = middle + 1 : end = middle;
+  }
+  return start;
+}
+function queueJob(job) {
+  if ((!queue.length || !queue.includes(job, isFlushing && job.allowRecurse ? flushIndex + 1 : flushIndex)) && job !== currentPreFlushParentJob) {
+    if (job.id == null) {
+      queue.push(job);
+    } else {
+      queue.splice(findInsertionIndex(job.id), 0, job);
+    }
+    queueFlush();
+  }
+}
+function queueFlush() {
+  if (!isFlushing && !isFlushPending) {
+    isFlushPending = true;
+    currentFlushPromise = resolvedPromise.then(flushJobs);
+  }
+}
+function queueCb(cb, activeQueue, pendingQueue, index) {
+  if (!isArray$1(cb)) {
+    if (!activeQueue || !activeQueue.includes(cb, cb.allowRecurse ? index + 1 : index)) {
+      pendingQueue.push(cb);
+    }
+  } else {
+    pendingQueue.push(...cb);
+  }
+  queueFlush();
+}
+function queuePreFlushCb(cb) {
+  queueCb(cb, activePreFlushCbs, pendingPreFlushCbs, preFlushIndex);
+}
+function queuePostFlushCb(cb) {
+  queueCb(cb, activePostFlushCbs, pendingPostFlushCbs, postFlushIndex);
+}
+function flushPreFlushCbs(seen, parentJob = null) {
+  if (pendingPreFlushCbs.length) {
+    currentPreFlushParentJob = parentJob;
+    activePreFlushCbs = [...new Set(pendingPreFlushCbs)];
+    pendingPreFlushCbs.length = 0;
+    for (preFlushIndex = 0; preFlushIndex < activePreFlushCbs.length; preFlushIndex++) {
+      activePreFlushCbs[preFlushIndex]();
+    }
+    activePreFlushCbs = null;
+    preFlushIndex = 0;
+    currentPreFlushParentJob = null;
+    flushPreFlushCbs(seen, parentJob);
+  }
+}
+function flushPostFlushCbs(seen) {
+  if (pendingPostFlushCbs.length) {
+    const deduped = [...new Set(pendingPostFlushCbs)];
+    pendingPostFlushCbs.length = 0;
+    if (activePostFlushCbs) {
+      activePostFlushCbs.push(...deduped);
+      return;
+    }
+    activePostFlushCbs = deduped;
+    activePostFlushCbs.sort((a, b) => getId(a) - getId(b));
+    for (postFlushIndex = 0; postFlushIndex < activePostFlushCbs.length; postFlushIndex++) {
+      activePostFlushCbs[postFlushIndex]();
+    }
+    activePostFlushCbs = null;
+    postFlushIndex = 0;
+  }
+}
+const getId = (job) => job.id == null ? Infinity : job.id;
+function flushJobs(seen) {
+  isFlushPending = false;
+  isFlushing = true;
+  flushPreFlushCbs(seen);
+  queue.sort((a, b) => getId(a) - getId(b));
+  try {
+    for (flushIndex = 0; flushIndex < queue.length; flushIndex++) {
+      const job = queue[flushIndex];
+      if (job && job.active !== false) {
+        if (false)
+          ;
+        callWithErrorHandling(job, null, 14);
+      }
+    }
+  } finally {
+    flushIndex = 0;
+    queue.length = 0;
+    flushPostFlushCbs();
+    isFlushing = false;
+    currentFlushPromise = null;
+    if (queue.length || pendingPreFlushCbs.length || pendingPostFlushCbs.length) {
+      flushJobs(seen);
+    }
+  }
+}
+function checkRecursiveUpdates(seen, fn) {
+  if (!seen.has(fn)) {
+    seen.set(fn, 1);
+  } else {
+    const count = seen.get(fn);
+    if (count > RECURSION_LIMIT) {
+      const instance = fn.ownerInstance;
+      const componentName = instance && getComponentName(instance.type);
+      warn(`Maximum recursive updates exceeded${componentName ? ` in component <${componentName}>` : ``}. This means you have a reactive effect that is mutating its own dependencies and thus recursively triggering itself. Possible sources include component template, render function, updated hook or watcher source function.`);
+      return true;
+    } else {
+      seen.set(fn, count + 1);
+    }
+  }
+}
+const INITIAL_WATCHER_VALUE = {};
+function doWatch(source, cb, { immediate, deep, flush, onTrack, onTrigger } = EMPTY_OBJ) {
+  const instance = currentInstance;
+  let getter;
+  let forceTrigger = false;
+  let isMultiSource = false;
+  if (isRef(source)) {
+    getter = () => source.value;
+    forceTrigger = !!source._shallow;
+  } else if (isReactive(source)) {
+    getter = () => source;
+    deep = true;
+  } else if (isArray$1(source)) {
+    isMultiSource = true;
+    forceTrigger = source.some(isReactive);
+    getter = () => source.map((s) => {
+      if (isRef(s)) {
+        return s.value;
+      } else if (isReactive(s)) {
+        return traverse(s);
+      } else if (isFunction(s)) {
+        return callWithErrorHandling(s, instance, 2);
+      } else
+        ;
+    });
+  } else if (isFunction(source)) {
+    if (cb) {
+      getter = () => callWithErrorHandling(source, instance, 2);
+    } else {
+      getter = () => {
+        if (instance && instance.isUnmounted) {
+          return;
+        }
+        if (cleanup) {
+          cleanup();
+        }
+        return callWithAsyncErrorHandling(source, instance, 3, [onInvalidate]);
+      };
+    }
+  } else {
+    getter = NOOP;
+  }
+  if (cb && deep) {
+    const baseGetter = getter;
+    getter = () => traverse(baseGetter());
+  }
+  let cleanup;
+  let onInvalidate = (fn) => {
+    cleanup = effect.onStop = () => {
+      callWithErrorHandling(fn, instance, 4);
+    };
+  };
+  let oldValue = isMultiSource ? [] : INITIAL_WATCHER_VALUE;
+  const job = () => {
+    if (!effect.active) {
+      return;
+    }
+    if (cb) {
+      const newValue = effect.run();
+      if (deep || forceTrigger || (isMultiSource ? newValue.some((v, i) => hasChanged(v, oldValue[i])) : hasChanged(newValue, oldValue)) || false) {
+        if (cleanup) {
+          cleanup();
+        }
+        callWithAsyncErrorHandling(cb, instance, 3, [
+          newValue,
+          oldValue === INITIAL_WATCHER_VALUE ? void 0 : oldValue,
+          onInvalidate
+        ]);
+        oldValue = newValue;
+      }
+    } else {
+      effect.run();
+    }
+  };
+  job.allowRecurse = !!cb;
+  let scheduler2;
+  if (flush === "sync") {
+    scheduler2 = job;
+  } else if (flush === "post") {
+    scheduler2 = () => queuePostRenderEffect(job, instance && instance.suspense);
+  } else {
+    scheduler2 = () => {
+      if (!instance || instance.isMounted) {
+        queuePreFlushCb(job);
+      } else {
+        job();
+      }
+    };
+  }
+  const effect = new ReactiveEffect(getter, scheduler2);
+  if (cb) {
+    if (immediate) {
+      job();
+    } else {
+      oldValue = effect.run();
+    }
+  } else if (flush === "post") {
+    queuePostRenderEffect(effect.run.bind(effect), instance && instance.suspense);
+  } else {
+    effect.run();
+  }
+  return () => {
+    effect.stop();
+    if (instance && instance.scope) {
+      remove(instance.scope.effects, effect);
+    }
+  };
+}
+function instanceWatch(source, value, options) {
+  const publicThis = this.proxy;
+  const getter = isString(source) ? source.includes(".") ? createPathGetter(publicThis, source) : () => publicThis[source] : source.bind(publicThis, publicThis);
+  let cb;
+  if (isFunction(value)) {
+    cb = value;
+  } else {
+    cb = value.handler;
+    options = value;
+  }
+  const cur = currentInstance;
+  setCurrentInstance(this);
+  const res = doWatch(getter, cb.bind(publicThis), options);
+  if (cur) {
+    setCurrentInstance(cur);
+  } else {
+    unsetCurrentInstance();
+  }
+  return res;
+}
+function createPathGetter(ctx, path) {
+  const segments = path.split(".");
+  return () => {
+    let cur = ctx;
+    for (let i = 0; i < segments.length && cur; i++) {
+      cur = cur[segments[i]];
+    }
+    return cur;
+  };
+}
+function traverse(value, seen = new Set()) {
+  if (!isObject(value) || value["__v_skip"]) {
+    return value;
+  }
+  seen = seen || new Set();
+  if (seen.has(value)) {
+    return value;
+  }
+  seen.add(value);
+  if (isRef(value)) {
+    traverse(value.value, seen);
+  } else if (isArray$1(value)) {
+    for (let i = 0; i < value.length; i++) {
+      traverse(value[i], seen);
+    }
+  } else if (isSet(value) || isMap(value)) {
+    value.forEach((v) => {
+      traverse(v, seen);
+    });
+  } else if (isPlainObject(value)) {
+    for (const key in value) {
+      traverse(value[key], seen);
+    }
+  }
+  return value;
+}
 function traverseChildElements(element, each, bind, level = 0) {
   var _a2;
   level++;
@@ -61,14 +877,121 @@ viewportTester.style.width = "100vw";
 viewportTester.style.height = "100vh";
 viewportTester.style.visibility = "hidden";
 viewportTester.style.pointerEvents = "none";
+var commonjsGlobal = typeof globalThis !== "undefined" ? globalThis : typeof window !== "undefined" ? window : typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : {};
+(function(l) {
+  function m() {
+  }
+  function k(a, c) {
+    a = a === void 0 ? "utf-8" : a;
+    c = c === void 0 ? { fatal: false } : c;
+    if (r.indexOf(a.toLowerCase()) === -1)
+      throw new RangeError("Failed to construct 'TextDecoder': The encoding label provided ('" + a + "') is invalid.");
+    if (c.fatal)
+      throw Error("Failed to construct 'TextDecoder': the 'fatal' option is unsupported.");
+  }
+  function t(a) {
+    return Buffer.from(a.buffer, a.byteOffset, a.byteLength).toString("utf-8");
+  }
+  function u(a) {
+    var c = URL.createObjectURL(new Blob([a], { type: "text/plain;charset=UTF-8" }));
+    try {
+      var f = new XMLHttpRequest();
+      f.open("GET", c, false);
+      f.send();
+      return f.responseText;
+    } catch (e) {
+      return q(a);
+    } finally {
+      URL.revokeObjectURL(c);
+    }
+  }
+  function q(a) {
+    for (var c = 0, f = Math.min(65536, a.length + 1), e = new Uint16Array(f), h = [], d = 0; ; ) {
+      var b = c < a.length;
+      if (!b || d >= f - 1) {
+        h.push(String.fromCharCode.apply(null, e.subarray(0, d)));
+        if (!b)
+          return h.join("");
+        a = a.subarray(c);
+        d = c = 0;
+      }
+      b = a[c++];
+      if ((b & 128) === 0)
+        e[d++] = b;
+      else if ((b & 224) === 192) {
+        var g = a[c++] & 63;
+        e[d++] = (b & 31) << 6 | g;
+      } else if ((b & 240) === 224) {
+        g = a[c++] & 63;
+        var n = a[c++] & 63;
+        e[d++] = (b & 31) << 12 | g << 6 | n;
+      } else if ((b & 248) === 240) {
+        g = a[c++] & 63;
+        n = a[c++] & 63;
+        var v = a[c++] & 63;
+        b = (b & 7) << 18 | g << 12 | n << 6 | v;
+        65535 < b && (b -= 65536, e[d++] = b >>> 10 & 1023 | 55296, b = 56320 | b & 1023);
+        e[d++] = b;
+      }
+    }
+  }
+  if (l.TextEncoder && l.TextDecoder)
+    return false;
+  var r = ["utf-8", "utf8", "unicode-1-1-utf-8"];
+  Object.defineProperty(m.prototype, "encoding", { value: "utf-8" });
+  m.prototype.encode = function(a, c) {
+    c = c === void 0 ? { stream: false } : c;
+    if (c.stream)
+      throw Error("Failed to encode: the 'stream' option is unsupported.");
+    c = 0;
+    for (var f = a.length, e = 0, h = Math.max(32, f + (f >>> 1) + 7), d = new Uint8Array(h >>> 3 << 3); c < f; ) {
+      var b = a.charCodeAt(c++);
+      if (55296 <= b && 56319 >= b) {
+        if (c < f) {
+          var g = a.charCodeAt(c);
+          (g & 64512) === 56320 && (++c, b = ((b & 1023) << 10) + (g & 1023) + 65536);
+        }
+        if (55296 <= b && 56319 >= b)
+          continue;
+      }
+      e + 4 > d.length && (h += 8, h *= 1 + c / a.length * 2, h = h >>> 3 << 3, g = new Uint8Array(h), g.set(d), d = g);
+      if ((b & 4294967168) === 0)
+        d[e++] = b;
+      else {
+        if ((b & 4294965248) === 0)
+          d[e++] = b >>> 6 & 31 | 192;
+        else if ((b & 4294901760) === 0)
+          d[e++] = b >>> 12 & 15 | 224, d[e++] = b >>> 6 & 63 | 128;
+        else if ((b & 4292870144) === 0)
+          d[e++] = b >>> 18 & 7 | 240, d[e++] = b >>> 12 & 63 | 128, d[e++] = b >>> 6 & 63 | 128;
+        else
+          continue;
+        d[e++] = b & 63 | 128;
+      }
+    }
+    return d.slice ? d.slice(0, e) : d.subarray(0, e);
+  };
+  Object.defineProperty(k.prototype, "encoding", { value: "utf-8" });
+  Object.defineProperty(k.prototype, "fatal", { value: false });
+  Object.defineProperty(k.prototype, "ignoreBOM", { value: false });
+  var p = q;
+  typeof Buffer === "function" && Buffer.from ? p = t : typeof Blob === "function" && typeof URL === "function" && typeof URL.createObjectURL === "function" && (p = u);
+  k.prototype.decode = function(a, c) {
+    c = c === void 0 ? { stream: false } : c;
+    if (c.stream)
+      throw Error("Failed to decode: the 'stream' option is unsupported.");
+    a = a instanceof Uint8Array ? a : a.buffer instanceof ArrayBuffer ? new Uint8Array(a.buffer) : new Uint8Array(a);
+    return p(a);
+  };
+  l.TextEncoder = m;
+  l.TextDecoder = k;
+})(typeof window !== "undefined" ? window : typeof commonjsGlobal !== "undefined" ? commonjsGlobal : commonjsGlobal);
 class WebLayer {
   constructor(manager, element, eventCallback) {
     __publicField(this, "manager");
     __publicField(this, "element");
     __publicField(this, "eventCallback");
-    __publicField(this, "isMediaElement", false);
-    __publicField(this, "isVideoElement", false);
-    __publicField(this, "isCanvasElement", false);
+    __publicField(this, "id");
     __publicField(this, "desiredPseudoState", {
       hover: false,
       active: false,
@@ -80,11 +1003,8 @@ class WebLayer {
     __publicField(this, "parentLayer");
     __publicField(this, "childLayers", []);
     __publicField(this, "pixelRatio");
-    __publicField(this, "allStateHashes", /* @__PURE__ */ new Set());
-    __publicField(this, "previousDOMStateKey");
-    __publicField(this, "desiredDOMStateKey");
-    __publicField(this, "currentDOMStateKey");
-    __publicField(this, "lastSVGUrl");
+    __publicField(this, "previousDOMStateHash");
+    __publicField(this, "currentDOMStateHash");
     __publicField(this, "domMetrics", {
       bounds: new Bounds(),
       padding: new Edges(),
@@ -97,10 +1017,10 @@ class WebLayer {
     if (!manager)
       throw new Error("WebLayerManager must be initialized");
     WebRenderer.layers.set(element, this);
+    this.id = element.getAttribute(WebRenderer.ELEMENT_UID_ATTRIBUTE) || WebRenderer.generateElementUID();
+    element.setAttribute(WebRenderer.ELEMENT_UID_ATTRIBUTE, this.id);
     element.setAttribute(WebRenderer.LAYER_ATTRIBUTE, "");
     this.parentLayer = WebRenderer.getClosestLayer(this.element, false);
-    this.isVideoElement = element.nodeName === "VIDEO";
-    this.isMediaElement = this.isVideoElement || element.nodeName === "IMG" || element.nodeName === "CANVAS";
     this.eventCallback("layercreated", { target: element });
   }
   setNeedsRefresh(recurse = false) {
@@ -110,13 +1030,10 @@ class WebLayer {
         c.setNeedsRefresh(recurse);
   }
   get previousDOMState() {
-    return this.previousDOMStateKey ? this.manager.getLayerState(this.previousDOMStateKey) : void 0;
-  }
-  get desiredDOMState() {
-    return this.desiredDOMStateKey ? this.manager.getLayerState(this.desiredDOMStateKey) : void 0;
+    return this.previousDOMStateHash ? this.manager.getLayerState(this.previousDOMStateHash) : void 0;
   }
   get currentDOMState() {
-    return this.currentDOMStateKey ? this.manager.getLayerState(this.currentDOMStateKey) : void 0;
+    return this.currentDOMStateHash ? this.manager.getLayerState(this.currentDOMStateHash) : void 0;
   }
   get depth() {
     let depth = 0;
@@ -150,26 +1067,20 @@ class WebLayer {
     }
   }
   update() {
-    var _a2, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
-    if (this.desiredDOMStateKey !== this.currentDOMStateKey) {
-      const desired = this.desiredDOMState;
-      if (desired && (this.isMediaElement || ((_a2 = desired.texture) == null ? void 0 : _a2.ktx2Url) || ((_b = desired.texture) == null ? void 0 : _b.canvas) || desired.fullWidth * desired.fullHeight === 0)) {
-        this.currentDOMStateKey = this.desiredDOMStateKey;
-      }
-    }
-    const prev = (_g = (_d = (_c = this.previousDOMState) == null ? void 0 : _c.texture) == null ? void 0 : _d.ktx2Url) != null ? _g : (_f = (_e = this.previousDOMState) == null ? void 0 : _e.texture) == null ? void 0 : _f.canvas;
-    const current = (_l = (_i = (_h = this.currentDOMState) == null ? void 0 : _h.texture) == null ? void 0 : _i.ktx2Url) != null ? _l : (_k = (_j = this.previousDOMState) == null ? void 0 : _j.texture) == null ? void 0 : _k.canvas;
-    if (current && prev !== current) {
+    const prevState = this.previousDOMState;
+    const state = this.currentDOMState;
+    if ((prevState == null ? void 0 : prevState.texture.url) !== (state == null ? void 0 : state.texture.url)) {
       this.eventCallback("layerpainted", { target: this.element });
     }
-    this.previousDOMStateKey = this.currentDOMStateKey;
+    this.previousDOMStateHash = this.currentDOMStateHash;
   }
   async refresh() {
+    this.currentDOMStateHash = void 0;
     this.needsRefresh = false;
     this._updateParentAndChildLayers();
     const result = await this.manager.addToSerializeQueue(this);
-    if (result.needsRasterize && typeof result.stateKey === "string" && result.svgUrl)
-      await this.manager.addToRasterizeQueue(result.stateKey, result.svgUrl);
+    if (result.needsRasterize)
+      await this.manager.addToRasterizeQueue(result.svgHash, result.svgUrl);
   }
   _updateParentAndChildLayers() {
     const element = this.element;
@@ -196,6 +1107,10 @@ class WebLayer {
       return false;
     const el = n;
     const styles = getComputedStyle(el);
+    const id = el.getAttribute(WebRenderer.ELEMENT_UID_ATTRIBUTE);
+    if (!id) {
+      el.setAttribute(WebRenderer.ELEMENT_UID_ATTRIBUTE, WebRenderer.generateElementUID());
+    }
     const isLayer = el.hasAttribute(WebRenderer.LAYER_ATTRIBUTE);
     if (isLayer || el.nodeName === "VIDEO" || styles.transform !== "none") {
       let child = WebRenderer.layers.get(el);
@@ -271,16 +1186,16 @@ var DOMRectReadOnly = function() {
   };
   return DOMRectReadOnly2;
 }();
-var isSVG = function(target2) {
-  return target2 instanceof SVGElement && "getBBox" in target2;
+var isSVG = function(target) {
+  return target instanceof SVGElement && "getBBox" in target;
 };
-var isHidden = function(target2) {
-  if (isSVG(target2)) {
-    var _a2 = target2.getBBox(), width = _a2.width, height = _a2.height;
+var isHidden = function(target) {
+  if (isSVG(target)) {
+    var _a2 = target.getBBox(), width = _a2.width, height = _a2.height;
     return !width && !height;
   }
-  var _b = target2, offsetWidth = _b.offsetWidth, offsetHeight = _b.offsetHeight;
-  return !(offsetWidth || offsetHeight || target2.getClientRects().length);
+  var _b = target, offsetWidth = _b.offsetWidth, offsetHeight = _b.offsetHeight;
+  return !(offsetWidth || offsetHeight || target.getClientRects().length);
 };
 var isElement = function(obj) {
   var _a2, _b;
@@ -290,10 +1205,10 @@ var isElement = function(obj) {
   var scope = (_b = (_a2 = obj) === null || _a2 === void 0 ? void 0 : _a2.ownerDocument) === null || _b === void 0 ? void 0 : _b.defaultView;
   return !!(scope && obj instanceof scope.Element);
 };
-var isReplacedElement = function(target2) {
-  switch (target2.tagName) {
+var isReplacedElement = function(target) {
+  switch (target.tagName) {
     case "INPUT":
-      if (target2.type !== "image") {
+      if (target.type !== "image") {
         break;
       }
     case "VIDEO":
@@ -308,7 +1223,7 @@ var isReplacedElement = function(target2) {
   return false;
 };
 var global$1 = typeof window !== "undefined" ? window : {};
-var cache = /* @__PURE__ */ new WeakMap();
+var cache = new WeakMap();
 var scrollRegexp = /auto|scroll/;
 var verticalRegexp = /^tb|vertical/;
 var IE = /msie|trident/i.test(global$1.navigator && global$1.navigator.userAgent);
@@ -333,19 +1248,19 @@ var zeroBoxes = freeze({
   contentBoxSize: size(),
   contentRect: new DOMRectReadOnly(0, 0, 0, 0)
 });
-var calculateBoxSizes = function(target2, forceRecalculation) {
+var calculateBoxSizes = function(target, forceRecalculation) {
   if (forceRecalculation === void 0) {
     forceRecalculation = false;
   }
-  if (cache.has(target2) && !forceRecalculation) {
-    return cache.get(target2);
+  if (cache.has(target) && !forceRecalculation) {
+    return cache.get(target);
   }
-  if (isHidden(target2)) {
-    cache.set(target2, zeroBoxes);
+  if (isHidden(target)) {
+    cache.set(target, zeroBoxes);
     return zeroBoxes;
   }
-  var cs = getComputedStyle(target2);
-  var svg = isSVG(target2) && target2.ownerSVGElement && target2.getBBox();
+  var cs = getComputedStyle(target);
+  var svg = isSVG(target) && target.ownerSVGElement && target.getBBox();
   var removePadding = !IE && cs.boxSizing === "border-box";
   var switchSizes = verticalRegexp.test(cs.writingMode || "");
   var canScrollVertically = !svg && scrollRegexp.test(cs.overflowY || "");
@@ -362,8 +1277,8 @@ var calculateBoxSizes = function(target2, forceRecalculation) {
   var verticalPadding = paddingTop + paddingBottom;
   var horizontalBorderArea = borderLeft + borderRight;
   var verticalBorderArea = borderTop + borderBottom;
-  var horizontalScrollbarThickness = !canScrollHorizontally ? 0 : target2.offsetHeight - verticalBorderArea - target2.clientHeight;
-  var verticalScrollbarThickness = !canScrollVertically ? 0 : target2.offsetWidth - horizontalBorderArea - target2.clientWidth;
+  var horizontalScrollbarThickness = !canScrollHorizontally ? 0 : target.offsetHeight - verticalBorderArea - target.clientHeight;
+  var verticalScrollbarThickness = !canScrollVertically ? 0 : target.offsetWidth - horizontalBorderArea - target.clientWidth;
   var widthReduction = removePadding ? horizontalPadding + horizontalBorderArea : 0;
   var heightReduction = removePadding ? verticalPadding + verticalBorderArea : 0;
   var contentWidth = svg ? svg.width : parseDimension(cs.width) - widthReduction - verticalScrollbarThickness;
@@ -376,11 +1291,11 @@ var calculateBoxSizes = function(target2, forceRecalculation) {
     contentBoxSize: size(contentWidth, contentHeight, switchSizes),
     contentRect: new DOMRectReadOnly(paddingLeft, paddingTop, contentWidth, contentHeight)
   });
-  cache.set(target2, boxes);
+  cache.set(target, boxes);
   return boxes;
 };
-var calculateBoxSize = function(target2, observedBox, forceRecalculation) {
-  var _a2 = calculateBoxSizes(target2, forceRecalculation), borderBoxSize = _a2.borderBoxSize, contentBoxSize = _a2.contentBoxSize, devicePixelContentBoxSize = _a2.devicePixelContentBoxSize;
+var calculateBoxSize = function(target, observedBox, forceRecalculation) {
+  var _a2 = calculateBoxSizes(target, forceRecalculation), borderBoxSize = _a2.borderBoxSize, contentBoxSize = _a2.contentBoxSize, devicePixelContentBoxSize = _a2.devicePixelContentBoxSize;
   switch (observedBox) {
     case ResizeObserverBoxOptions.DEVICE_PIXEL_CONTENT_BOX:
       return devicePixelContentBoxSize;
@@ -391,9 +1306,9 @@ var calculateBoxSize = function(target2, observedBox, forceRecalculation) {
   }
 };
 var ResizeObserverEntry = function() {
-  function ResizeObserverEntry2(target2) {
-    var boxes = calculateBoxSizes(target2);
-    this.target = target2;
+  function ResizeObserverEntry2(target) {
+    var boxes = calculateBoxSizes(target);
+    this.target = target;
     this.contentRect = boxes.contentRect;
     this.borderBoxSize = freeze([boxes.borderBoxSize]);
     this.contentBoxSize = freeze([boxes.contentBoxSize]);
@@ -602,12 +1517,12 @@ var updateCount = function(n) {
   watching += n;
   !watching && scheduler.stop();
 };
-var skipNotifyOnElement = function(target2) {
-  return !isSVG(target2) && !isReplacedElement(target2) && getComputedStyle(target2).display === "inline";
+var skipNotifyOnElement = function(target) {
+  return !isSVG(target) && !isReplacedElement(target) && getComputedStyle(target).display === "inline";
 };
 var ResizeObservation = function() {
-  function ResizeObservation2(target2, observedBox) {
-    this.target = target2;
+  function ResizeObservation2(target, observedBox) {
+    this.target = target;
     this.observedBox = observedBox || ResizeObserverBoxOptions.CONTENT_BOX;
     this.lastReportedSize = {
       inlineSize: 0,
@@ -636,10 +1551,10 @@ var ResizeObserverDetail = function() {
   }
   return ResizeObserverDetail2;
 }();
-var observerMap = /* @__PURE__ */ new WeakMap();
-var getObservationIndex = function(observationTargets, target2) {
+var observerMap = new WeakMap();
+var getObservationIndex = function(observationTargets, target) {
   for (var i = 0; i < observationTargets.length; i += 1) {
-    if (observationTargets[i].target === target2) {
+    if (observationTargets[i].target === target) {
       return i;
     }
   }
@@ -652,19 +1567,19 @@ var ResizeObserverController = function() {
     var detail = new ResizeObserverDetail(resizeObserver, callback);
     observerMap.set(resizeObserver, detail);
   };
-  ResizeObserverController2.observe = function(resizeObserver, target2, options) {
+  ResizeObserverController2.observe = function(resizeObserver, target, options) {
     var detail = observerMap.get(resizeObserver);
     var firstObservation = detail.observationTargets.length === 0;
-    if (getObservationIndex(detail.observationTargets, target2) < 0) {
+    if (getObservationIndex(detail.observationTargets, target) < 0) {
       firstObservation && resizeObservers.push(detail);
-      detail.observationTargets.push(new ResizeObservation(target2, options && options.box));
+      detail.observationTargets.push(new ResizeObservation(target, options && options.box));
       updateCount(1);
       scheduler.schedule();
     }
   };
-  ResizeObserverController2.unobserve = function(resizeObserver, target2) {
+  ResizeObserverController2.unobserve = function(resizeObserver, target) {
     var detail = observerMap.get(resizeObserver);
-    var index = getObservationIndex(detail.observationTargets, target2);
+    var index = getObservationIndex(detail.observationTargets, target);
     var lastObservation = detail.observationTargets.length === 1;
     if (index >= 0) {
       lastObservation && resizeObservers.splice(resizeObservers.indexOf(detail), 1);
@@ -692,23 +1607,23 @@ var ResizeObserver$1 = function() {
     }
     ResizeObserverController.connect(this, callback);
   }
-  ResizeObserver2.prototype.observe = function(target2, options) {
+  ResizeObserver2.prototype.observe = function(target, options) {
     if (arguments.length === 0) {
       throw new TypeError("Failed to execute 'observe' on 'ResizeObserver': 1 argument required, but only 0 present.");
     }
-    if (!isElement(target2)) {
+    if (!isElement(target)) {
       throw new TypeError("Failed to execute 'observe' on 'ResizeObserver': parameter 1 is not of type 'Element");
     }
-    ResizeObserverController.observe(this, target2, options);
+    ResizeObserverController.observe(this, target, options);
   };
-  ResizeObserver2.prototype.unobserve = function(target2) {
+  ResizeObserver2.prototype.unobserve = function(target) {
     if (arguments.length === 0) {
       throw new TypeError("Failed to execute 'unobserve' on 'ResizeObserver': 1 argument required, but only 0 present.");
     }
-    if (!isElement(target2)) {
+    if (!isElement(target)) {
       throw new TypeError("Failed to execute 'unobserve' on 'ResizeObserver': parameter 1 is not of type 'Element");
     }
-    ResizeObserverController.unobserve(this, target2);
+    ResizeObserverController.unobserve(this, target);
   };
   ResizeObserver2.prototype.disconnect = function() {
     ResizeObserverController.disconnect(this);
@@ -724,7 +1639,6 @@ function ensureElementIsInDocument(element, options) {
     return element;
   }
   const container = document.createElement("div");
-  container.id = element.id ? "container-" + element.id : "";
   container.setAttribute(WebRenderer.RENDERING_CONTAINER_ATTRIBUTE, "");
   container.style.visibility = "hidden";
   container.style.pointerEvents = "none";
@@ -737,6 +1651,9 @@ function ensureElementIsInDocument(element, options) {
 const scratchMat1 = new Matrix4();
 const scratchMat2 = new Matrix4();
 const _WebRenderer = class {
+  static get ELEMENT_UID_ATTRIBUTE() {
+    return this.ATTRIBUTE_PREFIX + "-uid";
+  }
   static get HOVER_ATTRIBUTE() {
     return this.ATTRIBUTE_PREFIX + "-hover";
   }
@@ -770,6 +1687,9 @@ const _WebRenderer = class {
   static get RENDERING_DOCUMENT_ATTRIBUTE() {
     return this.ATTRIBUTE_PREFIX + "-rendering-document";
   }
+  static generateElementUID() {
+    return "" + this._nextUID++;
+  }
   static getPsuedoAttributes(states) {
     return `${states.hover ? `${this.HOVER_ATTRIBUTE}="" ` : " "}${states.focus ? `${this.FOCUS_ATTRIBUTE}="" ` : " "}${states.active ? `${this.ACTIVE_ATTRIBUTE}="" ` : " "}${states.target ? `${this.TARGET_ATTRIBUTE}="" ` : " "}`;
   }
@@ -793,10 +1713,6 @@ const _WebRenderer = class {
       `;
     }
     const renderingStyles = `
-    :host > [${_WebRenderer.LAYER_ATTRIBUTE}] {
-      display: flow-root;
-    }
-
     [${_WebRenderer.RENDERING_DOCUMENT_ATTRIBUTE}] * {
       transform: none !important;
     }
@@ -824,6 +1740,7 @@ const _WebRenderer = class {
     }
     
     [${_WebRenderer.RENDERING_INLINE_ATTRIBUTE}] {
+      top: var(--x-inline-top) !important;
       width:auto !important;
     }
 
@@ -1059,7 +1976,7 @@ const _WebRenderer = class {
   }
   static async getAllEmbeddedStyles(el) {
     const rootNode = el.getRootNode();
-    const embedded = this.embeddedStyles.get(rootNode) || /* @__PURE__ */ new Map();
+    const embedded = this.embeddedStyles.get(rootNode) || new Map();
     this.embeddedStyles.set(rootNode, embedded);
     const styleElements = Array.from(rootNode.querySelectorAll("style, link[type='text/css'], link[rel='stylesheet']"));
     const inShadow = el.getRootNode() instanceof ShadowRoot;
@@ -1150,40 +2067,41 @@ const _WebRenderer = class {
 };
 let WebRenderer = _WebRenderer;
 __publicField(WebRenderer, "ATTRIBUTE_PREFIX", "xr");
+__publicField(WebRenderer, "_nextUID", 0);
 __publicField(WebRenderer, "serializer", new XMLSerializer());
-__publicField(WebRenderer, "rootLayers", /* @__PURE__ */ new Map());
-__publicField(WebRenderer, "layers", /* @__PURE__ */ new Map());
+__publicField(WebRenderer, "rootLayers", new Map());
+__publicField(WebRenderer, "layers", new Map());
 __publicField(WebRenderer, "focusElement", null);
 __publicField(WebRenderer, "activeElement", null);
 __publicField(WebRenderer, "targetElement", null);
-__publicField(WebRenderer, "mutationObservers", /* @__PURE__ */ new Map());
-__publicField(WebRenderer, "resizeObservers", /* @__PURE__ */ new Map());
-__publicField(WebRenderer, "rootNodeObservers", /* @__PURE__ */ new Map());
+__publicField(WebRenderer, "mutationObservers", new Map());
+__publicField(WebRenderer, "resizeObservers", new Map());
+__publicField(WebRenderer, "rootNodeObservers", new Map());
 __publicField(WebRenderer, "containerStyleElement");
 __publicField(WebRenderer, "_handleMutations", (records) => {
   var _a2, _b;
   for (const record of records) {
     if (record.type === "attributes") {
-      const target3 = record.target;
-      if (target3.getAttribute(record.attributeName) === record.oldValue) {
+      const target2 = record.target;
+      if (target2.getAttribute(record.attributeName) === record.oldValue) {
         continue;
       }
     }
     if (record.type === "characterData") {
-      const target3 = record.target;
-      if (target3.data === record.oldValue) {
+      const target2 = record.target;
+      if (target2.data === record.oldValue) {
         continue;
       }
-      if (((_a2 = target3.parentElement) == null ? void 0 : _a2.tagName.toLowerCase()) === "style") {
-        const style = target3.parentElement;
+      if (((_a2 = target2.parentElement) == null ? void 0 : _a2.tagName.toLowerCase()) === "style") {
+        const style = target2.parentElement;
         const rootNode = style.getRootNode();
         (_b = _WebRenderer.embeddedStyles.get(rootNode)) == null ? void 0 : _b.delete(style);
       }
     }
-    const target2 = record.target.nodeType === Node.ELEMENT_NODE ? record.target : record.target.parentElement;
-    if (!target2)
+    const target = record.target.nodeType === Node.ELEMENT_NODE ? record.target : record.target.parentElement;
+    if (!target)
       continue;
-    const layer = _WebRenderer.getClosestLayer(target2);
+    const layer = _WebRenderer.getClosestLayer(target);
     if (!layer)
       continue;
     if (record.type === "attributes" && record.attributeName === "class") {
@@ -1201,10 +2119,10 @@ __publicField(WebRenderer, "_triggerRefresh", async (e) => {
     layer.parentLayer ? layer.parentLayer.traverseChildLayers(_WebRenderer.setLayerNeedsRefresh) : layer.traverseLayers(_WebRenderer.setLayerNeedsRefresh);
   }
 });
-__publicField(WebRenderer, "embeddedStyles", /* @__PURE__ */ new Map());
-__publicField(WebRenderer, "fontStyles", /* @__PURE__ */ new Map());
-__publicField(WebRenderer, "dataURLMap", /* @__PURE__ */ new Map());
-__publicField(WebRenderer, "embeddedCSSMap", /* @__PURE__ */ new Map());
+__publicField(WebRenderer, "embeddedStyles", new Map());
+__publicField(WebRenderer, "fontStyles", new Map());
+__publicField(WebRenderer, "dataURLMap", new Map());
+__publicField(WebRenderer, "embeddedCSSMap", new Map());
 const ON_BEFORE_UPDATE = Symbol("ON_BEFORE_UPDATE");
 const scratchVector = new Vector3();
 const scratchMatrix = new Matrix4();
@@ -1225,11 +2143,9 @@ const _WebLayer3D = class extends Object3D {
     __publicField(this, "_localZ", 0);
     __publicField(this, "_viewZ", 0);
     __publicField(this, "_renderZ", 0);
-    __publicField(this, "_mediaSrc");
     __publicField(this, "_mediaTexture");
-    __publicField(this, "textures", /* @__PURE__ */ new Set());
+    __publicField(this, "textures", new Set());
     __publicField(this, "_previousTexture");
-    __publicField(this, "_textureMap", /* @__PURE__ */ new Map());
     __publicField(this, "contentMesh");
     __publicField(this, "_boundsMesh");
     __publicField(this, "cursor", new Object3D());
@@ -1248,7 +2164,7 @@ const _WebLayer3D = class extends Object3D {
     this.name = element.id;
     this._webLayer = WebRenderer.getClosestLayer(element);
     element.layer = this;
-    const geometry = this._webLayer.isMediaElement ? _WebLayer3D.GEOMETRY : _WebLayer3D.FLIPPED_GEOMETRY;
+    const geometry = this.element.nodeName === "VIDEO" ? _WebLayer3D.GEOMETRY : _WebLayer3D.FLIPPED_GEOMETRY;
     this.contentMesh = new Mesh(geometry, new MeshBasicMaterial({
       side: DoubleSide,
       depthWrite: false,
@@ -1284,51 +2200,31 @@ const _WebLayer3D = class extends Object3D {
       return true;
     return false;
   }
-  get allStateHashes() {
-    return this._webLayer.allStateHashes;
-  }
   get domState() {
     return this._webLayer.currentDOMState;
   }
   get texture() {
-    var _a2, _b, _c, _d;
+    var _a2;
     const manager = this.container.manager;
-    const _layer = this._webLayer;
-    if (_layer.isMediaElement) {
-      const media = this.element;
-      let t = this._mediaTexture;
-      if (!t || t.image && media.src !== t.image.src) {
-        if (t)
-          t.dispose();
-        t = _layer.isVideoElement ? new VideoTexture(media) : _layer.isCanvasElement ? new CanvasTexture(media) : new TextureLoader().load(media.src);
-        t.wrapS = ClampToEdgeWrapping;
-        t.wrapT = ClampToEdgeWrapping;
-        t.minFilter = LinearFilter;
+    if (this.element.tagName === "VIDEO") {
+      const video = this.element;
+      let t2 = this._mediaTexture;
+      if (!t2) {
+        t2 = new VideoTexture(video);
+        t2.wrapS = ClampToEdgeWrapping;
+        t2.wrapT = ClampToEdgeWrapping;
+        t2.minFilter = LinearFilter;
         if (manager.textureEncoding)
-          t.encoding = manager.textureEncoding;
-        this._mediaTexture = t;
+          t2.encoding = manager.textureEncoding;
+        this._mediaTexture = t2;
       }
-      return t;
+      return t2;
     }
-    const textureHash = (_b = (_a2 = this._webLayer.currentDOMState) == null ? void 0 : _a2.texture) == null ? void 0 : _b.hash;
-    if (textureHash) {
-      if (!this._textureMap.has(textureHash))
-        this._textureMap.set(textureHash, {});
-      const textures = manager.getTexture(textureHash);
-      const clonedTextures = this._textureMap.get(textureHash);
-      if (textures.compressedTexture && !clonedTextures.compressedTexture) {
-        (_c = clonedTextures.canvasTexture) == null ? void 0 : _c.dispose();
-        clonedTextures.canvasTexture = void 0;
-        clonedTextures.compressedTexture = textures.compressedTexture.clone();
-        clonedTextures.compressedTexture.needsUpdate = true;
-      }
-      if (textures.canvasTexture && !clonedTextures.canvasTexture) {
-        clonedTextures.canvasTexture = textures.canvasTexture.clone();
-        clonedTextures.canvasTexture.needsUpdate = true;
-      }
-      return (_d = clonedTextures.compressedTexture) != null ? _d : clonedTextures.canvasTexture;
-    }
-    return void 0;
+    const textureUrl = (_a2 = this._webLayer.currentDOMState) == null ? void 0 : _a2.texture.url;
+    let t = textureUrl ? manager.getTexture(textureUrl, this) : void 0;
+    if (t)
+      this.textures.add(t);
+    return t;
   }
   get desiredPseudoStates() {
     return this._webLayer.desiredPseudoState;
@@ -1386,8 +2282,6 @@ const _WebLayer3D = class extends Object3D {
     }
   }
   updateContent() {
-    if (this.parentWebLayer && !this.parentWebLayer.domLayout)
-      return;
     const mesh = this.contentMesh;
     const texture = this.texture;
     const material = mesh.material;
@@ -1414,7 +2308,7 @@ const _WebLayer3D = class extends Object3D {
         this.parent.remove(this);
       this.dispose();
     }
-    this._refreshMediaBounds();
+    this._refreshVideoBounds();
   }
   [ON_BEFORE_UPDATE]() {
   }
@@ -1459,11 +2353,6 @@ const _WebLayer3D = class extends Object3D {
     }
     return void 0;
   }
-  querySelectorAll(selector) {
-    var _a2;
-    const elements = this.element.querySelectorAll(selector) || ((_a2 = this.element.shadowRoot) == null ? void 0 : _a2.querySelectorAll(selector));
-    return Array.from(elements).map((e) => this.container.manager.layersByElement.get(e)).filter((l) => l);
-  }
   traverseLayerAncestors(each) {
     const parentLayer = this.parentWebLayer;
     if (parentLayer) {
@@ -1489,53 +2378,49 @@ const _WebLayer3D = class extends Object3D {
   }
   dispose() {
     WebRenderer.disposeLayer(this._webLayer);
-    for (const t of this.textures) {
-      t.dispose();
-    }
+    this.container.manager.disposeLayer(this);
     for (const child of this.childWebLayers)
       child.dispose();
   }
-  _refreshMediaBounds() {
-    if (this._webLayer.isMediaElement) {
-      const isVideo = this._webLayer.isVideoElement;
+  _refreshVideoBounds() {
+    if (this.element.nodeName === "VIDEO") {
       const domState = this.domState;
       if (!domState)
         return;
-      const media = this.element;
+      const video = this.element;
       const texture = this.texture;
       const computedStyle = getComputedStyle(this.element);
       const { objectFit } = computedStyle;
       const { width: viewWidth, height: viewHeight } = this.bounds.copy(domState.bounds);
-      const naturalWidth = isVideo ? media.videoWidth : media.naturalWidth;
-      const naturalHeight = isVideo ? media.videoHeight : media.naturalHeight;
-      const mediaRatio = naturalWidth / naturalHeight;
+      const { videoWidth, videoHeight } = video;
+      const videoRatio = videoWidth / videoHeight;
       const viewRatio = viewWidth / viewHeight;
       texture.center.set(0.5, 0.5);
       switch (objectFit) {
         case "none":
-          texture.repeat.set(viewWidth / naturalWidth, viewHeight / naturalHeight).clampScalar(0, 1);
+          texture.repeat.set(viewWidth / videoWidth, viewHeight / videoHeight).clampScalar(0, 1);
           break;
         case "contain":
         case "scale-down":
           texture.repeat.set(1, 1);
-          if (viewRatio > mediaRatio) {
-            const width = this.bounds.height * mediaRatio || 0;
+          if (viewRatio > videoRatio) {
+            const width = this.bounds.height * videoRatio || 0;
             this.bounds.left += (this.bounds.width - width) / 2;
             this.bounds.width = width;
           } else {
-            const height = this.bounds.width / mediaRatio || 0;
+            const height = this.bounds.width / videoRatio || 0;
             this.bounds.top += (this.bounds.height - height) / 2;
             this.bounds.height = height;
           }
           break;
         case "cover":
-          texture.repeat.set(viewWidth / naturalWidth, viewHeight / naturalHeight);
-          if (viewRatio < mediaRatio) {
-            const width = this.bounds.height * mediaRatio || 0;
+          texture.repeat.set(viewWidth / videoWidth, viewHeight / videoHeight);
+          if (viewRatio < videoRatio) {
+            const width = this.bounds.height * videoRatio || 0;
             this.bounds.left += (this.bounds.width - width) / 2;
             this.bounds.width = width;
           } else {
-            const height = this.bounds.width / mediaRatio || 0;
+            const height = this.bounds.width / videoRatio || 0;
             this.bounds.top += (this.bounds.height - height) / 2;
             this.bounds.height = height;
           }
@@ -1556,22 +2441,17 @@ const _WebLayer3D = class extends Object3D {
     if (!currentState)
       return;
     const { bounds: currentBounds, margin: currentMargin } = currentState;
-    const isMedia = this._webLayer.isMediaElement;
     this.domLayout.position.set(0, 0, 0);
     this.domLayout.scale.set(1, 1, 1);
     this.domLayout.quaternion.set(0, 0, 0, 1);
     const bounds = this.bounds.copy(currentBounds);
     const margin = this.margin.copy(currentMargin);
+    const fullWidth = bounds.width + margin.left + margin.right;
+    const fullHeight = bounds.height + margin.top + margin.bottom;
     const width = bounds.width;
     const height = bounds.height;
-    const marginLeft = isMedia ? 0 : margin.left;
-    const marginRight = isMedia ? 0 : margin.right;
-    const marginTop = isMedia ? 0 : margin.top;
-    const marginBottom = isMedia ? 0 : margin.bottom;
-    const fullWidth = width + marginLeft + marginRight;
-    const fullHeight = height + marginTop + marginBottom;
-    const pixelSize = 1 / this.container.manager.pixelsPerMeter;
-    this.domSize.set(Math.max(pixelSize * fullWidth, 1e-5), Math.max(pixelSize * fullHeight, 1e-5), 1);
+    const pixelSize = 1 / this.container.manager.pixelsPerUnit;
+    this.domSize.set(Math.max(pixelSize * (width + margin.left + margin.right), 1e-5), Math.max(pixelSize * (height + margin.top + margin.bottom), 1e-5), 1);
     const parentLayer = this.parentWebLayer;
     if (!parentLayer)
       return;
@@ -1581,7 +2461,7 @@ const _WebLayer3D = class extends Object3D {
     const parentFullHeight = parentBounds.height + parentMargin.bottom + parentMargin.top;
     const parentLeftEdge = -parentFullWidth / 2 + parentMargin.left;
     const parentTopEdge = parentFullHeight / 2 - parentMargin.top;
-    this.domLayout.position.set(pixelSize * (parentLeftEdge + fullWidth / 2 + bounds.left - marginLeft), pixelSize * (parentTopEdge - fullHeight / 2 - bounds.top + marginTop), 0);
+    this.domLayout.position.set(pixelSize * (parentLeftEdge + fullWidth / 2 + bounds.left - margin.left), pixelSize * (parentTopEdge - fullHeight / 2 - bounds.top + margin.top), 0);
     const computedStyle = getComputedStyle(this.element);
     const transform = computedStyle.transform;
     if (transform && transform !== "none") {
@@ -1597,409 +2477,6 @@ const _WebLayer3D = class extends Object3D {
 let WebLayer3D = _WebLayer3D;
 __publicField(WebLayer3D, "GEOMETRY", new PlaneGeometry(1, 1, 2, 2));
 __publicField(WebLayer3D, "FLIPPED_GEOMETRY", flipY(new PlaneGeometry(1, 1, 2, 2)));
-class WorkerPool {
-  constructor(pool = 4) {
-    this.pool = pool;
-    this.queue = [];
-    this.workers = [];
-    this.workersResolve = [];
-    this.workerStatus = 0;
-  }
-  _initWorker(workerId) {
-    if (!this.workers[workerId]) {
-      const worker = this.workerCreator();
-      worker.addEventListener("message", this._onMessage.bind(this, workerId));
-      this.workers[workerId] = worker;
-    }
-  }
-  _getIdleWorker() {
-    for (let i = 0; i < this.pool; i++)
-      if (!(this.workerStatus & 1 << i))
-        return i;
-    return -1;
-  }
-  _onMessage(workerId, msg2) {
-    const resolve = this.workersResolve[workerId];
-    resolve && resolve(msg2);
-    if (this.queue.length) {
-      const { resolve: resolve2, msg: msg3, transfer } = this.queue.shift();
-      this.workersResolve[workerId] = resolve2;
-      this.workers[workerId].postMessage(msg3, transfer);
-    } else {
-      this.workerStatus ^= 1 << workerId;
-    }
-  }
-  setWorkerCreator(workerCreator) {
-    this.workerCreator = workerCreator;
-  }
-  setWorkerLimit(pool) {
-    this.pool = pool;
-  }
-  postMessage(msg2, transfer) {
-    return new Promise((resolve) => {
-      const workerId = this._getIdleWorker();
-      if (workerId !== -1) {
-        this._initWorker(workerId);
-        this.workerStatus |= 1 << workerId;
-        this.workersResolve[workerId] = resolve;
-        this.workers[workerId].postMessage(msg2, transfer);
-      } else {
-        this.queue.push({ resolve, msg: msg2, transfer });
-      }
-    });
-  }
-  dispose() {
-    this.workers.forEach((worker) => worker.terminate());
-    this.workersResolve.length = 0;
-    this.workers.length = 0;
-    this.queue.length = 0;
-    this.workerStatus = 0;
-  }
-}
-const KTX2TransferSRGB = 2;
-const KTX2_ALPHA_PREMULTIPLIED = 1;
-const _taskCache = /* @__PURE__ */ new WeakMap();
-let _activeLoaders = 0;
-class KTX2Loader extends Loader {
-  constructor(manager) {
-    super(manager);
-    this.transcoderPath = "";
-    this.transcoderBinary = null;
-    this.transcoderPending = null;
-    this.workerPool = new WorkerPool();
-    this.workerSourceURL = "";
-    this.workerConfig = null;
-    if (typeof MSC_TRANSCODER !== "undefined") {
-      console.warn('THREE.KTX2Loader: Please update to latest "basis_transcoder". "msc_basis_transcoder" is no longer supported in three.js r125+.');
-    }
-  }
-  setTranscoderPath(path) {
-    this.transcoderPath = path;
-    return this;
-  }
-  setWorkerLimit(num) {
-    this.workerPool.setWorkerLimit(num);
-    return this;
-  }
-  detectSupport(renderer) {
-    this.workerConfig = {
-      astcSupported: renderer.extensions.has("WEBGL_compressed_texture_astc"),
-      etc1Supported: renderer.extensions.has("WEBGL_compressed_texture_etc1"),
-      etc2Supported: renderer.extensions.has("WEBGL_compressed_texture_etc"),
-      dxtSupported: renderer.extensions.has("WEBGL_compressed_texture_s3tc"),
-      bptcSupported: renderer.extensions.has("EXT_texture_compression_bptc"),
-      pvrtcSupported: renderer.extensions.has("WEBGL_compressed_texture_pvrtc") || renderer.extensions.has("WEBKIT_WEBGL_compressed_texture_pvrtc")
-    };
-    if (renderer.capabilities.isWebGL2) {
-      this.workerConfig.etc1Supported = false;
-    }
-    return this;
-  }
-  dispose() {
-    this.workerPool.dispose();
-    if (this.workerSourceURL)
-      URL.revokeObjectURL(this.workerSourceURL);
-    return this;
-  }
-  init() {
-    if (!this.transcoderPending) {
-      const jsLoader = new FileLoader(this.manager);
-      jsLoader.setPath(this.transcoderPath);
-      jsLoader.setWithCredentials(this.withCredentials);
-      const jsContent = jsLoader.loadAsync("basis_transcoder.js");
-      const binaryLoader = new FileLoader(this.manager);
-      binaryLoader.setPath(this.transcoderPath);
-      binaryLoader.setResponseType("arraybuffer");
-      binaryLoader.setWithCredentials(this.withCredentials);
-      const binaryContent = binaryLoader.loadAsync("basis_transcoder.wasm");
-      this.transcoderPending = Promise.all([jsContent, binaryContent]).then(([jsContent2, binaryContent2]) => {
-        const fn = KTX2Loader.BasisWorker.toString();
-        const body = [
-          "/* constants */",
-          "let _EngineFormat = " + JSON.stringify(KTX2Loader.EngineFormat),
-          "let _TranscoderFormat = " + JSON.stringify(KTX2Loader.TranscoderFormat),
-          "let _BasisFormat = " + JSON.stringify(KTX2Loader.BasisFormat),
-          "/* basis_transcoder.js */",
-          jsContent2,
-          "/* worker */",
-          fn.substring(fn.indexOf("{") + 1, fn.lastIndexOf("}"))
-        ].join("\n");
-        this.workerSourceURL = URL.createObjectURL(new Blob([body]));
-        this.transcoderBinary = binaryContent2;
-        this.workerPool.setWorkerCreator(() => {
-          const worker = new Worker(this.workerSourceURL);
-          const transcoderBinary = this.transcoderBinary.slice(0);
-          worker.postMessage({ type: "init", config: this.workerConfig, transcoderBinary }, [transcoderBinary]);
-          return worker;
-        });
-      });
-      if (_activeLoaders > 0) {
-        console.warn("THREE.KTX2Loader: Multiple active KTX2 loaders may cause performance issues. Use a single KTX2Loader instance, or call .dispose() on old instances.");
-      }
-      _activeLoaders++;
-    }
-    return this.transcoderPending;
-  }
-  load(url, onLoad, onProgress, onError) {
-    if (this.workerConfig === null) {
-      throw new Error("THREE.KTX2Loader: Missing initialization with `.detectSupport( renderer )`.");
-    }
-    const loader = new FileLoader(this.manager);
-    loader.setResponseType("arraybuffer");
-    loader.setWithCredentials(this.withCredentials);
-    const texture = new CompressedTexture();
-    loader.load(url, (buffer) => {
-      if (_taskCache.has(buffer)) {
-        const cachedTask = _taskCache.get(buffer);
-        return cachedTask.promise.then(onLoad).catch(onError);
-      }
-      this._createTexture([buffer]).then(function(_texture) {
-        texture.copy(_texture);
-        texture.needsUpdate = true;
-        if (onLoad)
-          onLoad(texture);
-      }).catch(onError);
-    }, onProgress, onError);
-    return texture;
-  }
-  _createTextureFrom(transcodeResult) {
-    const { mipmaps, width, height, format, type: type2, error, dfdTransferFn, dfdFlags } = transcodeResult;
-    if (type2 === "error")
-      return Promise.reject(error);
-    const texture = new CompressedTexture(mipmaps, width, height, format, UnsignedByteType);
-    texture.minFilter = mipmaps.length === 1 ? LinearFilter : LinearMipmapLinearFilter;
-    texture.magFilter = LinearFilter;
-    texture.generateMipmaps = false;
-    texture.needsUpdate = true;
-    texture.encoding = dfdTransferFn === KTX2TransferSRGB ? sRGBEncoding : LinearEncoding;
-    texture.premultiplyAlpha = !!(dfdFlags & KTX2_ALPHA_PREMULTIPLIED);
-    return texture;
-  }
-  _createTexture(buffers, config = {}) {
-    const taskConfig = config;
-    const texturePending = this.init().then(() => {
-      return this.workerPool.postMessage({ type: "transcode", buffers, taskConfig }, buffers);
-    }).then((e) => this._createTextureFrom(e.data));
-    _taskCache.set(buffers[0], { promise: texturePending });
-    return texturePending;
-  }
-  dispose() {
-    URL.revokeObjectURL(this.workerSourceURL);
-    this.workerPool.dispose();
-    _activeLoaders--;
-    return this;
-  }
-}
-KTX2Loader.BasisFormat = {
-  ETC1S: 0,
-  UASTC_4x4: 1
-};
-KTX2Loader.TranscoderFormat = {
-  ETC1: 0,
-  ETC2: 1,
-  BC1: 2,
-  BC3: 3,
-  BC4: 4,
-  BC5: 5,
-  BC7_M6_OPAQUE_ONLY: 6,
-  BC7_M5: 7,
-  PVRTC1_4_RGB: 8,
-  PVRTC1_4_RGBA: 9,
-  ASTC_4x4: 10,
-  ATC_RGB: 11,
-  ATC_RGBA_INTERPOLATED_ALPHA: 12,
-  RGBA32: 13,
-  RGB565: 14,
-  BGR565: 15,
-  RGBA4444: 16
-};
-KTX2Loader.EngineFormat = {
-  RGBAFormat,
-  RGBA_ASTC_4x4_Format,
-  RGBA_BPTC_Format,
-  RGBA_ETC2_EAC_Format,
-  RGBA_PVRTC_4BPPV1_Format,
-  RGBA_S3TC_DXT5_Format,
-  RGB_ETC1_Format,
-  RGB_ETC2_Format,
-  RGB_PVRTC_4BPPV1_Format,
-  RGB_S3TC_DXT1_Format
-};
-KTX2Loader.BasisWorker = function() {
-  let config;
-  let transcoderPending;
-  let BasisModule;
-  const EngineFormat = _EngineFormat;
-  const TranscoderFormat = _TranscoderFormat;
-  const BasisFormat = _BasisFormat;
-  self.addEventListener("message", function(e) {
-    const message = e.data;
-    switch (message.type) {
-      case "init":
-        config = message.config;
-        init(message.transcoderBinary);
-        break;
-      case "transcode":
-        transcoderPending.then(() => {
-          try {
-            const { width, height, hasAlpha, mipmaps, format, dfdTransferFn, dfdFlags } = transcode(message.buffers[0]);
-            const buffers = [];
-            for (let i = 0; i < mipmaps.length; ++i) {
-              buffers.push(mipmaps[i].data.buffer);
-            }
-            self.postMessage({ type: "transcode", id: message.id, width, height, hasAlpha, mipmaps, format, dfdTransferFn, dfdFlags }, buffers);
-          } catch (error) {
-            console.error(error);
-            self.postMessage({ type: "error", id: message.id, error: error.message });
-          }
-        });
-        break;
-    }
-  });
-  function init(wasmBinary) {
-    transcoderPending = new Promise((resolve) => {
-      BasisModule = { wasmBinary, onRuntimeInitialized: resolve };
-      BASIS(BasisModule);
-    }).then(() => {
-      BasisModule.initializeBasis();
-      if (BasisModule.KTX2File === void 0) {
-        console.warn("THREE.KTX2Loader: Please update Basis Universal transcoder.");
-      }
-    });
-  }
-  function transcode(buffer) {
-    const ktx2File = new BasisModule.KTX2File(new Uint8Array(buffer));
-    function cleanup() {
-      ktx2File.close();
-      ktx2File.delete();
-    }
-    if (!ktx2File.isValid()) {
-      cleanup();
-      throw new Error("THREE.KTX2Loader:	Invalid or unsupported .ktx2 file");
-    }
-    const basisFormat = ktx2File.isUASTC() ? BasisFormat.UASTC_4x4 : BasisFormat.ETC1S;
-    const width = ktx2File.getWidth();
-    const height = ktx2File.getHeight();
-    const levels = ktx2File.getLevels();
-    const hasAlpha = ktx2File.getHasAlpha();
-    const dfdTransferFn = ktx2File.getDFDTransferFunc();
-    const dfdFlags = ktx2File.getDFDFlags();
-    const { transcoderFormat, engineFormat } = getTranscoderFormat(basisFormat, width, height, hasAlpha);
-    if (!width || !height || !levels) {
-      cleanup();
-      throw new Error("THREE.KTX2Loader:	Invalid texture");
-    }
-    if (!ktx2File.startTranscoding()) {
-      cleanup();
-      throw new Error("THREE.KTX2Loader: .startTranscoding failed");
-    }
-    const mipmaps = [];
-    for (let mip = 0; mip < levels; mip++) {
-      const levelInfo = ktx2File.getImageLevelInfo(mip, 0, 0);
-      const mipWidth = levelInfo.origWidth;
-      const mipHeight = levelInfo.origHeight;
-      const dst = new Uint8Array(ktx2File.getImageTranscodedSizeInBytes(mip, 0, 0, transcoderFormat));
-      const status = ktx2File.transcodeImage(dst, mip, 0, 0, transcoderFormat, 0, -1, -1);
-      if (!status) {
-        cleanup();
-        throw new Error("THREE.KTX2Loader: .transcodeImage failed.");
-      }
-      mipmaps.push({ data: dst, width: mipWidth, height: mipHeight });
-    }
-    cleanup();
-    return { width, height, hasAlpha, mipmaps, format: engineFormat, dfdTransferFn, dfdFlags };
-  }
-  const FORMAT_OPTIONS = [
-    {
-      if: "astcSupported",
-      basisFormat: [BasisFormat.UASTC_4x4],
-      transcoderFormat: [TranscoderFormat.ASTC_4x4, TranscoderFormat.ASTC_4x4],
-      engineFormat: [EngineFormat.RGBA_ASTC_4x4_Format, EngineFormat.RGBA_ASTC_4x4_Format],
-      priorityETC1S: Infinity,
-      priorityUASTC: 1,
-      needsPowerOfTwo: false
-    },
-    {
-      if: "bptcSupported",
-      basisFormat: [BasisFormat.ETC1S, BasisFormat.UASTC_4x4],
-      transcoderFormat: [TranscoderFormat.BC7_M5, TranscoderFormat.BC7_M5],
-      engineFormat: [EngineFormat.RGBA_BPTC_Format, EngineFormat.RGBA_BPTC_Format],
-      priorityETC1S: 3,
-      priorityUASTC: 2,
-      needsPowerOfTwo: false
-    },
-    {
-      if: "dxtSupported",
-      basisFormat: [BasisFormat.ETC1S, BasisFormat.UASTC_4x4],
-      transcoderFormat: [TranscoderFormat.BC1, TranscoderFormat.BC3],
-      engineFormat: [EngineFormat.RGB_S3TC_DXT1_Format, EngineFormat.RGBA_S3TC_DXT5_Format],
-      priorityETC1S: 4,
-      priorityUASTC: 5,
-      needsPowerOfTwo: false
-    },
-    {
-      if: "etc2Supported",
-      basisFormat: [BasisFormat.ETC1S, BasisFormat.UASTC_4x4],
-      transcoderFormat: [TranscoderFormat.ETC1, TranscoderFormat.ETC2],
-      engineFormat: [EngineFormat.RGB_ETC2_Format, EngineFormat.RGBA_ETC2_EAC_Format],
-      priorityETC1S: 1,
-      priorityUASTC: 3,
-      needsPowerOfTwo: false
-    },
-    {
-      if: "etc1Supported",
-      basisFormat: [BasisFormat.ETC1S, BasisFormat.UASTC_4x4],
-      transcoderFormat: [TranscoderFormat.ETC1],
-      engineFormat: [EngineFormat.RGB_ETC1_Format],
-      priorityETC1S: 2,
-      priorityUASTC: 4,
-      needsPowerOfTwo: false
-    },
-    {
-      if: "pvrtcSupported",
-      basisFormat: [BasisFormat.ETC1S, BasisFormat.UASTC_4x4],
-      transcoderFormat: [TranscoderFormat.PVRTC1_4_RGB, TranscoderFormat.PVRTC1_4_RGBA],
-      engineFormat: [EngineFormat.RGB_PVRTC_4BPPV1_Format, EngineFormat.RGBA_PVRTC_4BPPV1_Format],
-      priorityETC1S: 5,
-      priorityUASTC: 6,
-      needsPowerOfTwo: true
-    }
-  ];
-  const ETC1S_OPTIONS = FORMAT_OPTIONS.sort(function(a, b) {
-    return a.priorityETC1S - b.priorityETC1S;
-  });
-  const UASTC_OPTIONS = FORMAT_OPTIONS.sort(function(a, b) {
-    return a.priorityUASTC - b.priorityUASTC;
-  });
-  function getTranscoderFormat(basisFormat, width, height, hasAlpha) {
-    let transcoderFormat;
-    let engineFormat;
-    const options = basisFormat === BasisFormat.ETC1S ? ETC1S_OPTIONS : UASTC_OPTIONS;
-    for (let i = 0; i < options.length; i++) {
-      const opt = options[i];
-      if (!config[opt.if])
-        continue;
-      if (!opt.basisFormat.includes(basisFormat))
-        continue;
-      if (hasAlpha && opt.transcoderFormat.length < 2)
-        continue;
-      if (opt.needsPowerOfTwo && !(isPowerOfTwo(width) && isPowerOfTwo(height)))
-        continue;
-      transcoderFormat = opt.transcoderFormat[hasAlpha ? 1 : 0];
-      engineFormat = opt.engineFormat[hasAlpha ? 1 : 0];
-      return { transcoderFormat, engineFormat };
-    }
-    console.warn("THREE.KTX2Loader: No suitable compressed texture format found. Decoding to RGBA32.");
-    transcoderFormat = TranscoderFormat.RGBA32;
-    engineFormat = EngineFormat.RGBAFormat;
-    return { transcoderFormat, engineFormat };
-  }
-  function isPowerOfTwo(value) {
-    if (value <= 2)
-      return true;
-    return (value & value - 1) === 0 && value !== 0;
-  }
-};
 /*! *****************************************************************************
 Copyright (c) Microsoft Corporation.
 Permission to use, copy, modify, and/or distribute this software for any
@@ -2209,7 +2686,7 @@ arrayToObject(intrinsicTypeNames, function(x) {
 });
 var circularRefs = null;
 function deepClone(any) {
-  circularRefs = typeof WeakMap !== "undefined" && /* @__PURE__ */ new WeakMap();
+  circularRefs = typeof WeakMap !== "undefined" && new WeakMap();
   var rv = innerDeepClone(any);
   circularRefs = null;
   return rv;
@@ -2307,13 +2784,13 @@ function getErrorWithStack() {
   return new Error();
 }
 function prettyStack(exception, numIgnoredFrames) {
-  var stack = exception.stack;
-  if (!stack)
+  var stack2 = exception.stack;
+  if (!stack2)
     return "";
   numIgnoredFrames = numIgnoredFrames || 0;
-  if (stack.indexOf(exception.name) === 0)
+  if (stack2.indexOf(exception.name) === 0)
     numIgnoredFrames += (exception.name + exception.message).split("\n").length;
-  return stack.split("\n").slice(numIgnoredFrames).filter(libraryFilter).map(function(frame) {
+  return stack2.split("\n").slice(numIgnoredFrames).filter(libraryFilter).map(function(frame) {
     return "\n" + frame;
   }).join("");
 }
@@ -2679,10 +3156,10 @@ props(DexiePromise.prototype, {
       try {
         stack_being_generated = true;
         var stacks = getStack(this, [], MAX_LONG_STACKS);
-        var stack = stacks.join("\nFrom previous: ");
+        var stack2 = stacks.join("\nFrom previous: ");
         if (this._state !== null)
-          this._stack = stack;
-        return stack;
+          this._stack = stack2;
+        return stack2;
       } finally {
         stack_being_generated = false;
       }
@@ -2931,23 +3408,23 @@ function callListener(cb, promise, listener) {
 function getStack(promise, stacks, limit) {
   if (stacks.length === limit)
     return stacks;
-  var stack = "";
+  var stack2 = "";
   if (promise._state === false) {
     var failure = promise._value, errorName, message;
     if (failure != null) {
       errorName = failure.name || "Error";
       message = failure.message || failure;
-      stack = prettyStack(failure, 0);
+      stack2 = prettyStack(failure, 0);
     } else {
       errorName = failure;
       message = "";
     }
-    stacks.push(errorName + (message ? ": " + message : "") + stack);
+    stacks.push(errorName + (message ? ": " + message : "") + stack2);
   }
   if (debug) {
-    stack = prettyStack(promise._stackHolder, 2);
-    if (stack && stacks.indexOf(stack) === -1)
-      stacks.push(stack);
+    stack2 = prettyStack(promise._stackHolder, 2);
+    if (stack2 && stacks.indexOf(stack2) === -1)
+      stacks.push(stack2);
     if (promise._prev)
       getStack(promise._prev, stacks, limit);
   }
@@ -3246,15 +3723,7 @@ function tempTransaction(db, mode, storeNames, fn) {
     var trans = db._createTransaction(mode, storeNames, db._dbSchema);
     try {
       trans.create();
-      db._state.PR1398_maxLoop = 3;
     } catch (ex) {
-      if (ex.name === errnames.InvalidState && db.isOpen() && --db._state.PR1398_maxLoop > 0) {
-        console.warn("Dexie: Need to reopen db");
-        db._close();
-        return db.open().then(function() {
-          return tempTransaction(db, mode, storeNames, fn);
-        });
-      }
       return rejection(ex);
     }
     return trans._promise(mode, function(resolve, reject) {
@@ -3269,7 +3738,7 @@ function tempTransaction(db, mode, storeNames, fn) {
     });
   }
 }
-var DEXIE_VERSION = "3.2.1";
+var DEXIE_VERSION = "3.2.0";
 var maxString = String.fromCharCode(65535);
 var minKey = -Infinity;
 var INVALID_KEY_ARGUMENT = "Invalid key provided. Keys must be of type string, number, Date or Array<string | number | Date>.";
@@ -5404,7 +5873,7 @@ function runUpgraders(db, oldVersion, idbUpgradeTrans, reject) {
 }
 function updateTablesAndIndexes(_a2, oldVersion, trans, idbUpgradeTrans) {
   var db = _a2._novip;
-  var queue = [];
+  var queue2 = [];
   var versions = db._versions;
   var globalSchema = db._dbSchema = buildGlobalSchema(db, db.idbdb, idbUpgradeTrans);
   var anyContentUpgraderHasRun = false;
@@ -5412,7 +5881,7 @@ function updateTablesAndIndexes(_a2, oldVersion, trans, idbUpgradeTrans) {
     return v._cfg.version >= oldVersion;
   });
   versToRun.forEach(function(version) {
-    queue.push(function() {
+    queue2.push(function() {
       var oldSchema = globalSchema;
       var newSchema = version._cfg.dbschema;
       adjustToExistingIndexNames(db, oldSchema, idbUpgradeTrans);
@@ -5470,7 +5939,7 @@ function updateTablesAndIndexes(_a2, oldVersion, trans, idbUpgradeTrans) {
         });
       }
     });
-    queue.push(function(idbtrans) {
+    queue2.push(function(idbtrans) {
       if (!anyContentUpgraderHasRun || !hasIEDeleteObjectStoreBug) {
         var newSchema = version._cfg.dbschema;
         deleteRemovedTables(newSchema, idbtrans);
@@ -5481,7 +5950,7 @@ function updateTablesAndIndexes(_a2, oldVersion, trans, idbUpgradeTrans) {
     });
   });
   function runQueue() {
-    return queue.length ? DexiePromise.resolve(queue.shift()(trans.idbtrans)).then(runQueue) : DexiePromise.resolve();
+    return queue2.length ? DexiePromise.resolve(queue2.shift()(trans.idbtrans)).then(runQueue) : DexiePromise.resolve();
   }
   return runQueue().then(function() {
     createMissingTables(globalSchema, idbUpgradeTrans);
@@ -5880,19 +6349,7 @@ function enterTransactionScope(db, mode, storeNames, parentTransaction, scopeFun
     if (parentTransaction) {
       trans.idbtrans = parentTransaction.idbtrans;
     } else {
-      try {
-        trans.create();
-        db._state.PR1398_maxLoop = 3;
-      } catch (ex) {
-        if (ex.name === errnames.InvalidState && db.isOpen() && --db._state.PR1398_maxLoop > 0) {
-          console.warn("Dexie: Need to reopen db");
-          db._close();
-          return db.open().then(function() {
-            return enterTransactionScope(db, mode, storeNames, null, scopeFunc);
-          });
-        }
-        return rejection(ex);
-      }
+      trans.create();
     }
     var scopeFuncIsAsync = isAsyncFunction(scopeFunc);
     if (scopeFuncIsAsync) {
@@ -6275,53 +6732,53 @@ props(RangeSet.prototype, (_a = {
 }, _a[iteratorSymbol] = function() {
   return getRangeSetIterator(this);
 }, _a));
-function addRange(target2, from, to) {
+function addRange(target, from, to) {
   var diff = cmp(from, to);
   if (isNaN(diff))
     return;
   if (diff > 0)
     throw RangeError();
-  if (isEmptyRange(target2))
-    return extend(target2, { from, to, d: 1 });
-  var left = target2.l;
-  var right = target2.r;
-  if (cmp(to, target2.from) < 0) {
-    left ? addRange(left, from, to) : target2.l = { from, to, d: 1, l: null, r: null };
-    return rebalance(target2);
+  if (isEmptyRange(target))
+    return extend(target, { from, to, d: 1 });
+  var left = target.l;
+  var right = target.r;
+  if (cmp(to, target.from) < 0) {
+    left ? addRange(left, from, to) : target.l = { from, to, d: 1, l: null, r: null };
+    return rebalance(target);
   }
-  if (cmp(from, target2.to) > 0) {
-    right ? addRange(right, from, to) : target2.r = { from, to, d: 1, l: null, r: null };
-    return rebalance(target2);
+  if (cmp(from, target.to) > 0) {
+    right ? addRange(right, from, to) : target.r = { from, to, d: 1, l: null, r: null };
+    return rebalance(target);
   }
-  if (cmp(from, target2.from) < 0) {
-    target2.from = from;
-    target2.l = null;
-    target2.d = right ? right.d + 1 : 1;
+  if (cmp(from, target.from) < 0) {
+    target.from = from;
+    target.l = null;
+    target.d = right ? right.d + 1 : 1;
   }
-  if (cmp(to, target2.to) > 0) {
-    target2.to = to;
-    target2.r = null;
-    target2.d = target2.l ? target2.l.d + 1 : 1;
+  if (cmp(to, target.to) > 0) {
+    target.to = to;
+    target.r = null;
+    target.d = target.l ? target.l.d + 1 : 1;
   }
-  var rightWasCutOff = !target2.r;
-  if (left && !target2.l) {
-    mergeRanges(target2, left);
+  var rightWasCutOff = !target.r;
+  if (left && !target.l) {
+    mergeRanges(target, left);
   }
   if (right && rightWasCutOff) {
-    mergeRanges(target2, right);
+    mergeRanges(target, right);
   }
 }
-function mergeRanges(target2, newSet) {
-  function _addRangeSet(target3, _a2) {
+function mergeRanges(target, newSet) {
+  function _addRangeSet(target2, _a2) {
     var from = _a2.from, to = _a2.to, l = _a2.l, r = _a2.r;
-    addRange(target3, from, to);
+    addRange(target2, from, to);
     if (l)
-      _addRangeSet(target3, l);
+      _addRangeSet(target2, l);
     if (r)
-      _addRangeSet(target3, r);
+      _addRangeSet(target2, r);
   }
   if (!isEmptyRange(newSet))
-    _addRangeSet(target2, newSet);
+    _addRangeSet(target, newSet);
 }
 function rangesOverlap(rangeSet1, rangeSet2) {
   var i1 = getRangeSetIterator(rangeSet2);
@@ -6373,22 +6830,22 @@ function getRangeSetIterator(node) {
     }
   };
 }
-function rebalance(target2) {
+function rebalance(target) {
   var _a2, _b;
-  var diff = (((_a2 = target2.r) === null || _a2 === void 0 ? void 0 : _a2.d) || 0) - (((_b = target2.l) === null || _b === void 0 ? void 0 : _b.d) || 0);
+  var diff = (((_a2 = target.r) === null || _a2 === void 0 ? void 0 : _a2.d) || 0) - (((_b = target.l) === null || _b === void 0 ? void 0 : _b.d) || 0);
   var r = diff > 1 ? "r" : diff < -1 ? "l" : "";
   if (r) {
     var l = r === "r" ? "l" : "r";
-    var rootClone = __assign({}, target2);
-    var oldRootRight = target2[r];
-    target2.from = oldRootRight.from;
-    target2.to = oldRootRight.to;
-    target2[r] = oldRootRight[r];
+    var rootClone = __assign({}, target);
+    var oldRootRight = target[r];
+    target.from = oldRootRight.from;
+    target.to = oldRootRight.to;
+    target[r] = oldRootRight[r];
     rootClone[r] = oldRootRight[l];
-    target2[l] = rootClone;
+    target[l] = rootClone;
     rootClone.d = computeDepth(rootClone);
   }
-  target2.d = computeDepth(target2);
+  target.d = computeDepth(target);
 }
 function computeDepth(_a2) {
   var r = _a2.r, l = _a2.l;
@@ -6587,8 +7044,7 @@ var Dexie$1 = function() {
       dbReadyPromise: null,
       cancelOpen: nop,
       openCanceller: null,
-      autoSchema: true,
-      PR1398_maxLoop: 3
+      autoSchema: true
     };
     state.dbReadyPromise = new DexiePromise(function(resolve) {
       state.dbReadyResolve = resolve;
@@ -6700,20 +7156,20 @@ var Dexie$1 = function() {
     }).then(fn);
   };
   Dexie2.prototype.use = function(_a2) {
-    var stack = _a2.stack, create = _a2.create, level = _a2.level, name = _a2.name;
+    var stack2 = _a2.stack, create = _a2.create, level = _a2.level, name = _a2.name;
     if (name)
-      this.unuse({ stack, name });
-    var middlewares = this._middlewares[stack] || (this._middlewares[stack] = []);
-    middlewares.push({ stack, create, level: level == null ? 10 : level, name });
+      this.unuse({ stack: stack2, name });
+    var middlewares = this._middlewares[stack2] || (this._middlewares[stack2] = []);
+    middlewares.push({ stack: stack2, create, level: level == null ? 10 : level, name });
     middlewares.sort(function(a, b) {
       return a.level - b.level;
     });
     return this;
   };
   Dexie2.prototype.unuse = function(_a2) {
-    var stack = _a2.stack, name = _a2.name, create = _a2.create;
-    if (stack && this._middlewares[stack]) {
-      this._middlewares[stack] = this._middlewares[stack].filter(function(mw) {
+    var stack2 = _a2.stack, name = _a2.name, create = _a2.create;
+    if (stack2 && this._middlewares[stack2]) {
+      this._middlewares[stack2] = this._middlewares[stack2].filter(function(mw) {
         return create ? mw.create !== create : name ? mw.name !== name : false;
       });
     }
@@ -6876,12 +7332,12 @@ var Observable = function() {
   };
   return Observable2;
 }();
-function extendObservabilitySet(target2, newSet) {
+function extendObservabilitySet(target, newSet) {
   keys(newSet).forEach(function(part) {
-    var rangeSet = target2[part] || (target2[part] = new RangeSet());
+    var rangeSet = target[part] || (target[part] = new RangeSet());
     mergeRanges(rangeSet, newSet[part]);
   });
-  return target2;
+  return target;
 }
 function liveQuery(querier) {
   return new Observable(function(observer) {
@@ -7162,1742 +7618,6 @@ for (let n = 0; n <= 255; ++n) {
   const hexOctet = n.toString(16).padStart(2, "0");
   byteToHex[n] = hexOctet;
 }
-var decoder;
-try {
-  decoder = new TextDecoder();
-} catch (error) {
-}
-var src;
-var srcEnd;
-var position$1 = 0;
-var currentUnpackr = {};
-var currentStructures;
-var srcString;
-var srcStringStart = 0;
-var srcStringEnd = 0;
-var bundledStrings$1;
-var referenceMap;
-var currentExtensions = [];
-var dataView;
-var defaultOptions = {
-  useRecords: false,
-  mapsAsObjects: true
-};
-class C1Type {
-}
-const C1 = new C1Type();
-C1.name = "MessagePack 0xC1";
-var sequentialMode = false;
-class Unpackr {
-  constructor(options) {
-    if (options) {
-      if (options.useRecords === false && options.mapsAsObjects === void 0)
-        options.mapsAsObjects = true;
-      if (options.structures)
-        options.structures.sharedLength = options.structures.length;
-      else if (options.getStructures) {
-        (options.structures = []).uninitialized = true;
-        options.structures.sharedLength = 0;
-      }
-    }
-    Object.assign(this, options);
-  }
-  unpack(source, end) {
-    if (src) {
-      return saveState(() => {
-        clearSource();
-        return this ? this.unpack(source, end) : Unpackr.prototype.unpack.call(defaultOptions, source, end);
-      });
-    }
-    srcEnd = end > -1 ? end : source.length;
-    position$1 = 0;
-    srcStringEnd = 0;
-    srcString = null;
-    bundledStrings$1 = null;
-    src = source;
-    try {
-      dataView = source.dataView || (source.dataView = new DataView(source.buffer, source.byteOffset, source.byteLength));
-    } catch (error) {
-      src = null;
-      if (source instanceof Uint8Array)
-        throw error;
-      throw new Error("Source must be a Uint8Array or Buffer but was a " + (source && typeof source == "object" ? source.constructor.name : typeof source));
-    }
-    if (this instanceof Unpackr) {
-      currentUnpackr = this;
-      if (this.structures) {
-        currentStructures = this.structures;
-        return checkedRead();
-      } else if (!currentStructures || currentStructures.length > 0) {
-        currentStructures = [];
-      }
-    } else {
-      currentUnpackr = defaultOptions;
-      if (!currentStructures || currentStructures.length > 0)
-        currentStructures = [];
-    }
-    return checkedRead();
-  }
-  unpackMultiple(source, forEach) {
-    let values, lastPosition = 0;
-    try {
-      sequentialMode = true;
-      let size2 = source.length;
-      let value = this ? this.unpack(source, size2) : defaultUnpackr.unpack(source, size2);
-      if (forEach) {
-        forEach(value);
-        while (position$1 < size2) {
-          lastPosition = position$1;
-          if (forEach(checkedRead()) === false) {
-            return;
-          }
-        }
-      } else {
-        values = [value];
-        while (position$1 < size2) {
-          lastPosition = position$1;
-          values.push(checkedRead());
-        }
-        return values;
-      }
-    } catch (error) {
-      error.lastPosition = lastPosition;
-      error.values = values;
-      throw error;
-    } finally {
-      sequentialMode = false;
-      clearSource();
-    }
-  }
-  _mergeStructures(loadedStructures, existingStructures) {
-    loadedStructures = loadedStructures || [];
-    for (let i = 0, l = loadedStructures.length; i < l; i++) {
-      let structure = loadedStructures[i];
-      if (structure) {
-        structure.isShared = true;
-        if (i >= 32)
-          structure.highByte = i - 32 >> 5;
-      }
-    }
-    loadedStructures.sharedLength = loadedStructures.length;
-    for (let id in existingStructures || []) {
-      if (id >= 0) {
-        let structure = loadedStructures[id];
-        let existing = existingStructures[id];
-        if (existing) {
-          if (structure)
-            (loadedStructures.restoreStructures || (loadedStructures.restoreStructures = []))[id] = structure;
-          loadedStructures[id] = existing;
-        }
-      }
-    }
-    return this.structures = loadedStructures;
-  }
-  decode(source, end) {
-    return this.unpack(source, end);
-  }
-}
-function checkedRead() {
-  try {
-    if (!currentUnpackr.trusted && !sequentialMode) {
-      let sharedLength = currentStructures.sharedLength || 0;
-      if (sharedLength < currentStructures.length)
-        currentStructures.length = sharedLength;
-    }
-    let result = read();
-    if (bundledStrings$1)
-      position$1 = bundledStrings$1.postBundlePosition;
-    if (position$1 == srcEnd) {
-      if (currentStructures.restoreStructures)
-        restoreStructures();
-      currentStructures = null;
-      src = null;
-      if (referenceMap)
-        referenceMap = null;
-    } else if (position$1 > srcEnd) {
-      let error = new Error("Unexpected end of MessagePack data");
-      error.incomplete = true;
-      throw error;
-    } else if (!sequentialMode) {
-      throw new Error("Data read, but end of buffer not reached");
-    }
-    return result;
-  } catch (error) {
-    if (currentStructures.restoreStructures)
-      restoreStructures();
-    clearSource();
-    if (error instanceof RangeError || error.message.startsWith("Unexpected end of buffer")) {
-      error.incomplete = true;
-    }
-    throw error;
-  }
-}
-function restoreStructures() {
-  for (let id in currentStructures.restoreStructures) {
-    currentStructures[id] = currentStructures.restoreStructures[id];
-  }
-  currentStructures.restoreStructures = null;
-}
-function read() {
-  let token = src[position$1++];
-  if (token < 160) {
-    if (token < 128) {
-      if (token < 64)
-        return token;
-      else {
-        let structure = currentStructures[token & 63] || currentUnpackr.getStructures && loadStructures()[token & 63];
-        if (structure) {
-          if (!structure.read) {
-            structure.read = createStructureReader(structure, token & 63);
-          }
-          return structure.read();
-        } else
-          return token;
-      }
-    } else if (token < 144) {
-      token -= 128;
-      if (currentUnpackr.mapsAsObjects) {
-        let object = {};
-        for (let i = 0; i < token; i++) {
-          object[readKey()] = read();
-        }
-        return object;
-      } else {
-        let map = /* @__PURE__ */ new Map();
-        for (let i = 0; i < token; i++) {
-          map.set(read(), read());
-        }
-        return map;
-      }
-    } else {
-      token -= 144;
-      let array = new Array(token);
-      for (let i = 0; i < token; i++) {
-        array[i] = read();
-      }
-      return array;
-    }
-  } else if (token < 192) {
-    let length = token - 160;
-    if (srcStringEnd >= position$1) {
-      return srcString.slice(position$1 - srcStringStart, (position$1 += length) - srcStringStart);
-    }
-    if (srcStringEnd == 0 && srcEnd < 140) {
-      let string = length < 16 ? shortStringInJS(length) : longStringInJS(length);
-      if (string != null)
-        return string;
-    }
-    return readFixedString(length);
-  } else {
-    let value;
-    switch (token) {
-      case 192:
-        return null;
-      case 193:
-        if (bundledStrings$1) {
-          value = read();
-          if (value > 0)
-            return bundledStrings$1[1].slice(bundledStrings$1.position1, bundledStrings$1.position1 += value);
-          else
-            return bundledStrings$1[0].slice(bundledStrings$1.position0, bundledStrings$1.position0 -= value);
-        }
-        return C1;
-      case 194:
-        return false;
-      case 195:
-        return true;
-      case 196:
-        return readBin(src[position$1++]);
-      case 197:
-        value = dataView.getUint16(position$1);
-        position$1 += 2;
-        return readBin(value);
-      case 198:
-        value = dataView.getUint32(position$1);
-        position$1 += 4;
-        return readBin(value);
-      case 199:
-        return readExt(src[position$1++]);
-      case 200:
-        value = dataView.getUint16(position$1);
-        position$1 += 2;
-        return readExt(value);
-      case 201:
-        value = dataView.getUint32(position$1);
-        position$1 += 4;
-        return readExt(value);
-      case 202:
-        value = dataView.getFloat32(position$1);
-        if (currentUnpackr.useFloat32 > 2) {
-          let multiplier = mult10[(src[position$1] & 127) << 1 | src[position$1 + 1] >> 7];
-          position$1 += 4;
-          return (multiplier * value + (value > 0 ? 0.5 : -0.5) >> 0) / multiplier;
-        }
-        position$1 += 4;
-        return value;
-      case 203:
-        value = dataView.getFloat64(position$1);
-        position$1 += 8;
-        return value;
-      case 204:
-        return src[position$1++];
-      case 205:
-        value = dataView.getUint16(position$1);
-        position$1 += 2;
-        return value;
-      case 206:
-        value = dataView.getUint32(position$1);
-        position$1 += 4;
-        return value;
-      case 207:
-        if (currentUnpackr.int64AsNumber) {
-          value = dataView.getUint32(position$1) * 4294967296;
-          value += dataView.getUint32(position$1 + 4);
-        } else
-          value = dataView.getBigUint64(position$1);
-        position$1 += 8;
-        return value;
-      case 208:
-        return dataView.getInt8(position$1++);
-      case 209:
-        value = dataView.getInt16(position$1);
-        position$1 += 2;
-        return value;
-      case 210:
-        value = dataView.getInt32(position$1);
-        position$1 += 4;
-        return value;
-      case 211:
-        if (currentUnpackr.int64AsNumber) {
-          value = dataView.getInt32(position$1) * 4294967296;
-          value += dataView.getUint32(position$1 + 4);
-        } else
-          value = dataView.getBigInt64(position$1);
-        position$1 += 8;
-        return value;
-      case 212:
-        value = src[position$1++];
-        if (value == 114) {
-          return recordDefinition(src[position$1++] & 63);
-        } else {
-          let extension = currentExtensions[value];
-          if (extension) {
-            if (extension.read) {
-              position$1++;
-              return extension.read(read());
-            } else if (extension.noBuffer) {
-              position$1++;
-              return extension();
-            } else
-              return extension(src.subarray(position$1, ++position$1));
-          } else
-            throw new Error("Unknown extension " + value);
-        }
-      case 213:
-        value = src[position$1];
-        if (value == 114) {
-          position$1++;
-          return recordDefinition(src[position$1++] & 63, src[position$1++]);
-        } else
-          return readExt(2);
-      case 214:
-        return readExt(4);
-      case 215:
-        return readExt(8);
-      case 216:
-        return readExt(16);
-      case 217:
-        value = src[position$1++];
-        if (srcStringEnd >= position$1) {
-          return srcString.slice(position$1 - srcStringStart, (position$1 += value) - srcStringStart);
-        }
-        return readString8(value);
-      case 218:
-        value = dataView.getUint16(position$1);
-        position$1 += 2;
-        if (srcStringEnd >= position$1) {
-          return srcString.slice(position$1 - srcStringStart, (position$1 += value) - srcStringStart);
-        }
-        return readString16(value);
-      case 219:
-        value = dataView.getUint32(position$1);
-        position$1 += 4;
-        if (srcStringEnd >= position$1) {
-          return srcString.slice(position$1 - srcStringStart, (position$1 += value) - srcStringStart);
-        }
-        return readString32(value);
-      case 220:
-        value = dataView.getUint16(position$1);
-        position$1 += 2;
-        return readArray(value);
-      case 221:
-        value = dataView.getUint32(position$1);
-        position$1 += 4;
-        return readArray(value);
-      case 222:
-        value = dataView.getUint16(position$1);
-        position$1 += 2;
-        return readMap(value);
-      case 223:
-        value = dataView.getUint32(position$1);
-        position$1 += 4;
-        return readMap(value);
-      default:
-        if (token >= 224)
-          return token - 256;
-        if (token === void 0) {
-          let error = new Error("Unexpected end of MessagePack data");
-          error.incomplete = true;
-          throw error;
-        }
-        throw new Error("Unknown MessagePack token " + token);
-    }
-  }
-}
-const validName = /^[a-zA-Z_$][a-zA-Z\d_$]*$/;
-function createStructureReader(structure, firstId) {
-  function readObject() {
-    if (readObject.count++ > 2) {
-      let readObject2 = structure.read = new Function("r", "return function(){return {" + structure.map((key) => validName.test(key) ? key + ":r()" : "[" + JSON.stringify(key) + "]:r()").join(",") + "}}")(read);
-      if (structure.highByte === 0)
-        structure.read = createSecondByteReader(firstId, structure.read);
-      return readObject2();
-    }
-    let object = {};
-    for (let i = 0, l = structure.length; i < l; i++) {
-      let key = structure[i];
-      object[key] = read();
-    }
-    return object;
-  }
-  readObject.count = 0;
-  if (structure.highByte === 0) {
-    return createSecondByteReader(firstId, readObject);
-  }
-  return readObject;
-}
-const createSecondByteReader = (firstId, read0) => {
-  return function() {
-    let highByte = src[position$1++];
-    if (highByte === 0)
-      return read0();
-    let id = firstId < 32 ? -(firstId + (highByte << 5)) : firstId + (highByte << 5);
-    let structure = currentStructures[id] || loadStructures()[id];
-    if (!structure) {
-      throw new Error("Record id is not defined for " + id);
-    }
-    if (!structure.read)
-      structure.read = createStructureReader(structure, firstId);
-    return structure.read();
-  };
-};
-function loadStructures() {
-  let loadedStructures = saveState(() => {
-    src = null;
-    return currentUnpackr.getStructures();
-  });
-  return currentStructures = currentUnpackr._mergeStructures(loadedStructures, currentStructures);
-}
-var readFixedString = readStringJS;
-var readString8 = readStringJS;
-var readString16 = readStringJS;
-var readString32 = readStringJS;
-function readStringJS(length) {
-  let result;
-  if (length < 16) {
-    if (result = shortStringInJS(length))
-      return result;
-  }
-  if (length > 64 && decoder)
-    return decoder.decode(src.subarray(position$1, position$1 += length));
-  const end = position$1 + length;
-  const units = [];
-  result = "";
-  while (position$1 < end) {
-    const byte1 = src[position$1++];
-    if ((byte1 & 128) === 0) {
-      units.push(byte1);
-    } else if ((byte1 & 224) === 192) {
-      const byte2 = src[position$1++] & 63;
-      units.push((byte1 & 31) << 6 | byte2);
-    } else if ((byte1 & 240) === 224) {
-      const byte2 = src[position$1++] & 63;
-      const byte3 = src[position$1++] & 63;
-      units.push((byte1 & 31) << 12 | byte2 << 6 | byte3);
-    } else if ((byte1 & 248) === 240) {
-      const byte2 = src[position$1++] & 63;
-      const byte3 = src[position$1++] & 63;
-      const byte4 = src[position$1++] & 63;
-      let unit = (byte1 & 7) << 18 | byte2 << 12 | byte3 << 6 | byte4;
-      if (unit > 65535) {
-        unit -= 65536;
-        units.push(unit >>> 10 & 1023 | 55296);
-        unit = 56320 | unit & 1023;
-      }
-      units.push(unit);
-    } else {
-      units.push(byte1);
-    }
-    if (units.length >= 4096) {
-      result += fromCharCode.apply(String, units);
-      units.length = 0;
-    }
-  }
-  if (units.length > 0) {
-    result += fromCharCode.apply(String, units);
-  }
-  return result;
-}
-function readArray(length) {
-  let array = new Array(length);
-  for (let i = 0; i < length; i++) {
-    array[i] = read();
-  }
-  return array;
-}
-function readMap(length) {
-  if (currentUnpackr.mapsAsObjects) {
-    let object = {};
-    for (let i = 0; i < length; i++) {
-      object[readKey()] = read();
-    }
-    return object;
-  } else {
-    let map = /* @__PURE__ */ new Map();
-    for (let i = 0; i < length; i++) {
-      map.set(read(), read());
-    }
-    return map;
-  }
-}
-var fromCharCode = String.fromCharCode;
-function longStringInJS(length) {
-  let start = position$1;
-  let bytes = new Array(length);
-  for (let i = 0; i < length; i++) {
-    const byte = src[position$1++];
-    if ((byte & 128) > 0) {
-      position$1 = start;
-      return;
-    }
-    bytes[i] = byte;
-  }
-  return fromCharCode.apply(String, bytes);
-}
-function shortStringInJS(length) {
-  if (length < 4) {
-    if (length < 2) {
-      if (length === 0)
-        return "";
-      else {
-        let a = src[position$1++];
-        if ((a & 128) > 1) {
-          position$1 -= 1;
-          return;
-        }
-        return fromCharCode(a);
-      }
-    } else {
-      let a = src[position$1++];
-      let b = src[position$1++];
-      if ((a & 128) > 0 || (b & 128) > 0) {
-        position$1 -= 2;
-        return;
-      }
-      if (length < 3)
-        return fromCharCode(a, b);
-      let c = src[position$1++];
-      if ((c & 128) > 0) {
-        position$1 -= 3;
-        return;
-      }
-      return fromCharCode(a, b, c);
-    }
-  } else {
-    let a = src[position$1++];
-    let b = src[position$1++];
-    let c = src[position$1++];
-    let d = src[position$1++];
-    if ((a & 128) > 0 || (b & 128) > 0 || (c & 128) > 0 || (d & 128) > 0) {
-      position$1 -= 4;
-      return;
-    }
-    if (length < 6) {
-      if (length === 4)
-        return fromCharCode(a, b, c, d);
-      else {
-        let e = src[position$1++];
-        if ((e & 128) > 0) {
-          position$1 -= 5;
-          return;
-        }
-        return fromCharCode(a, b, c, d, e);
-      }
-    } else if (length < 8) {
-      let e = src[position$1++];
-      let f = src[position$1++];
-      if ((e & 128) > 0 || (f & 128) > 0) {
-        position$1 -= 6;
-        return;
-      }
-      if (length < 7)
-        return fromCharCode(a, b, c, d, e, f);
-      let g = src[position$1++];
-      if ((g & 128) > 0) {
-        position$1 -= 7;
-        return;
-      }
-      return fromCharCode(a, b, c, d, e, f, g);
-    } else {
-      let e = src[position$1++];
-      let f = src[position$1++];
-      let g = src[position$1++];
-      let h = src[position$1++];
-      if ((e & 128) > 0 || (f & 128) > 0 || (g & 128) > 0 || (h & 128) > 0) {
-        position$1 -= 8;
-        return;
-      }
-      if (length < 10) {
-        if (length === 8)
-          return fromCharCode(a, b, c, d, e, f, g, h);
-        else {
-          let i = src[position$1++];
-          if ((i & 128) > 0) {
-            position$1 -= 9;
-            return;
-          }
-          return fromCharCode(a, b, c, d, e, f, g, h, i);
-        }
-      } else if (length < 12) {
-        let i = src[position$1++];
-        let j = src[position$1++];
-        if ((i & 128) > 0 || (j & 128) > 0) {
-          position$1 -= 10;
-          return;
-        }
-        if (length < 11)
-          return fromCharCode(a, b, c, d, e, f, g, h, i, j);
-        let k = src[position$1++];
-        if ((k & 128) > 0) {
-          position$1 -= 11;
-          return;
-        }
-        return fromCharCode(a, b, c, d, e, f, g, h, i, j, k);
-      } else {
-        let i = src[position$1++];
-        let j = src[position$1++];
-        let k = src[position$1++];
-        let l = src[position$1++];
-        if ((i & 128) > 0 || (j & 128) > 0 || (k & 128) > 0 || (l & 128) > 0) {
-          position$1 -= 12;
-          return;
-        }
-        if (length < 14) {
-          if (length === 12)
-            return fromCharCode(a, b, c, d, e, f, g, h, i, j, k, l);
-          else {
-            let m = src[position$1++];
-            if ((m & 128) > 0) {
-              position$1 -= 13;
-              return;
-            }
-            return fromCharCode(a, b, c, d, e, f, g, h, i, j, k, l, m);
-          }
-        } else {
-          let m = src[position$1++];
-          let n = src[position$1++];
-          if ((m & 128) > 0 || (n & 128) > 0) {
-            position$1 -= 14;
-            return;
-          }
-          if (length < 15)
-            return fromCharCode(a, b, c, d, e, f, g, h, i, j, k, l, m, n);
-          let o = src[position$1++];
-          if ((o & 128) > 0) {
-            position$1 -= 15;
-            return;
-          }
-          return fromCharCode(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o);
-        }
-      }
-    }
-  }
-}
-function readOnlyJSString() {
-  let token = src[position$1++];
-  let length;
-  if (token < 192) {
-    length = token - 160;
-  } else {
-    switch (token) {
-      case 217:
-        length = src[position$1++];
-        break;
-      case 218:
-        length = dataView.getUint16(position$1);
-        position$1 += 2;
-        break;
-      case 219:
-        length = dataView.getUint32(position$1);
-        position$1 += 4;
-        break;
-      default:
-        throw new Error("Expected string");
-    }
-  }
-  return readStringJS(length);
-}
-function readBin(length) {
-  return currentUnpackr.copyBuffers ? Uint8Array.prototype.slice.call(src, position$1, position$1 += length) : src.subarray(position$1, position$1 += length);
-}
-function readExt(length) {
-  let type2 = src[position$1++];
-  if (currentExtensions[type2]) {
-    return currentExtensions[type2](src.subarray(position$1, position$1 += length));
-  } else
-    throw new Error("Unknown extension type " + type2);
-}
-var keyCache = new Array(4096);
-function readKey() {
-  let length = src[position$1++];
-  if (length >= 160 && length < 192) {
-    length = length - 160;
-    if (srcStringEnd >= position$1)
-      return srcString.slice(position$1 - srcStringStart, (position$1 += length) - srcStringStart);
-    else if (!(srcStringEnd == 0 && srcEnd < 180))
-      return readFixedString(length);
-  } else {
-    position$1--;
-    return read();
-  }
-  let key = (length << 5 ^ (length > 1 ? dataView.getUint16(position$1) : length > 0 ? src[position$1] : 0)) & 4095;
-  let entry = keyCache[key];
-  let checkPosition = position$1;
-  let end = position$1 + length - 3;
-  let chunk;
-  let i = 0;
-  if (entry && entry.bytes == length) {
-    while (checkPosition < end) {
-      chunk = dataView.getUint32(checkPosition);
-      if (chunk != entry[i++]) {
-        checkPosition = 1879048192;
-        break;
-      }
-      checkPosition += 4;
-    }
-    end += 3;
-    while (checkPosition < end) {
-      chunk = src[checkPosition++];
-      if (chunk != entry[i++]) {
-        checkPosition = 1879048192;
-        break;
-      }
-    }
-    if (checkPosition === end) {
-      position$1 = checkPosition;
-      return entry.string;
-    }
-    end -= 3;
-    checkPosition = position$1;
-  }
-  entry = [];
-  keyCache[key] = entry;
-  entry.bytes = length;
-  while (checkPosition < end) {
-    chunk = dataView.getUint32(checkPosition);
-    entry.push(chunk);
-    checkPosition += 4;
-  }
-  end += 3;
-  while (checkPosition < end) {
-    chunk = src[checkPosition++];
-    entry.push(chunk);
-  }
-  let string = length < 16 ? shortStringInJS(length) : longStringInJS(length);
-  if (string != null)
-    return entry.string = string;
-  return entry.string = readFixedString(length);
-}
-const recordDefinition = (id, highByte) => {
-  var structure = read();
-  let firstByte = id;
-  if (highByte !== void 0) {
-    id = id < 32 ? -((highByte << 5) + id) : (highByte << 5) + id;
-    structure.highByte = highByte;
-  }
-  let existingStructure = currentStructures[id];
-  if (existingStructure && existingStructure.isShared) {
-    (currentStructures.restoreStructures || (currentStructures.restoreStructures = []))[id] = existingStructure;
-  }
-  currentStructures[id] = structure;
-  structure.read = createStructureReader(structure, firstByte);
-  return structure.read();
-};
-var glbl = typeof self == "object" ? self : global;
-currentExtensions[0] = () => {
-};
-currentExtensions[0].noBuffer = true;
-currentExtensions[101] = () => {
-  let data = read();
-  return (glbl[data[0]] || Error)(data[1]);
-};
-currentExtensions[105] = (data) => {
-  let id = dataView.getUint32(position$1 - 4);
-  if (!referenceMap)
-    referenceMap = /* @__PURE__ */ new Map();
-  let token = src[position$1];
-  let target2;
-  if (token >= 144 && token < 160 || token == 220 || token == 221)
-    target2 = [];
-  else
-    target2 = {};
-  let refEntry = { target: target2 };
-  referenceMap.set(id, refEntry);
-  let targetProperties = read();
-  if (refEntry.used)
-    return Object.assign(target2, targetProperties);
-  refEntry.target = targetProperties;
-  return targetProperties;
-};
-currentExtensions[112] = (data) => {
-  let id = dataView.getUint32(position$1 - 4);
-  let refEntry = referenceMap.get(id);
-  refEntry.used = true;
-  return refEntry.target;
-};
-currentExtensions[115] = () => new Set(read());
-const typedArrays = ["Int8", "Uint8", "Uint8Clamped", "Int16", "Uint16", "Int32", "Uint32", "Float32", "Float64", "BigInt64", "BigUint64"].map((type2) => type2 + "Array");
-currentExtensions[116] = (data) => {
-  let typeCode = data[0];
-  let typedArrayName = typedArrays[typeCode];
-  if (!typedArrayName)
-    throw new Error("Could not find typed array for code " + typeCode);
-  return new glbl[typedArrayName](Uint8Array.prototype.slice.call(data, 1).buffer);
-};
-currentExtensions[120] = () => {
-  let data = read();
-  return new RegExp(data[0], data[1]);
-};
-const TEMP_BUNDLE = [];
-currentExtensions[98] = (data) => {
-  let dataSize = (data[0] << 24) + (data[1] << 16) + (data[2] << 8) + data[3];
-  let dataPosition = position$1;
-  position$1 += dataSize - data.length;
-  bundledStrings$1 = TEMP_BUNDLE;
-  bundledStrings$1 = [readOnlyJSString(), readOnlyJSString()];
-  bundledStrings$1.position0 = 0;
-  bundledStrings$1.position1 = 0;
-  bundledStrings$1.postBundlePosition = position$1;
-  position$1 = dataPosition;
-  return read();
-};
-currentExtensions[255] = (data) => {
-  if (data.length == 4)
-    return new Date((data[0] * 16777216 + (data[1] << 16) + (data[2] << 8) + data[3]) * 1e3);
-  else if (data.length == 8)
-    return new Date(((data[0] << 22) + (data[1] << 14) + (data[2] << 6) + (data[3] >> 2)) / 1e6 + ((data[3] & 3) * 4294967296 + data[4] * 16777216 + (data[5] << 16) + (data[6] << 8) + data[7]) * 1e3);
-  else if (data.length == 12)
-    return new Date(((data[0] << 24) + (data[1] << 16) + (data[2] << 8) + data[3]) / 1e6 + ((data[4] & 128 ? -281474976710656 : 0) + data[6] * 1099511627776 + data[7] * 4294967296 + data[8] * 16777216 + (data[9] << 16) + (data[10] << 8) + data[11]) * 1e3);
-  else
-    return new Date("invalid");
-};
-function saveState(callback) {
-  let savedSrcEnd = srcEnd;
-  let savedPosition = position$1;
-  let savedSrcStringStart = srcStringStart;
-  let savedSrcStringEnd = srcStringEnd;
-  let savedSrcString = srcString;
-  let savedReferenceMap = referenceMap;
-  let savedBundledStrings = bundledStrings$1;
-  let savedSrc = new Uint8Array(src.slice(0, srcEnd));
-  let savedStructures = currentStructures;
-  let savedStructuresContents = currentStructures.slice(0, currentStructures.length);
-  let savedPackr = currentUnpackr;
-  let savedSequentialMode = sequentialMode;
-  let value = callback();
-  srcEnd = savedSrcEnd;
-  position$1 = savedPosition;
-  srcStringStart = savedSrcStringStart;
-  srcStringEnd = savedSrcStringEnd;
-  srcString = savedSrcString;
-  referenceMap = savedReferenceMap;
-  bundledStrings$1 = savedBundledStrings;
-  src = savedSrc;
-  sequentialMode = savedSequentialMode;
-  currentStructures = savedStructures;
-  currentStructures.splice(0, currentStructures.length, ...savedStructuresContents);
-  currentUnpackr = savedPackr;
-  dataView = new DataView(src.buffer, src.byteOffset, src.byteLength);
-  return value;
-}
-function clearSource() {
-  src = null;
-  referenceMap = null;
-  currentStructures = null;
-}
-const mult10 = new Array(147);
-for (let i = 0; i < 256; i++) {
-  mult10[i] = +("1e" + Math.floor(45.15 - i * 0.30103));
-}
-var defaultUnpackr = new Unpackr({ useRecords: false });
-defaultUnpackr.unpack;
-defaultUnpackr.unpackMultiple;
-defaultUnpackr.unpack;
-let f32Array = new Float32Array(1);
-new Uint8Array(f32Array.buffer, 0, 4);
-let textEncoder;
-try {
-  textEncoder = new TextEncoder();
-} catch (error) {
-}
-let extensions, extensionClasses;
-const hasNodeBuffer = typeof Buffer !== "undefined";
-const ByteArrayAllocate = hasNodeBuffer ? Buffer.allocUnsafeSlow : Uint8Array;
-const ByteArray = hasNodeBuffer ? Buffer : Uint8Array;
-const MAX_BUFFER_SIZE = hasNodeBuffer ? 4294967296 : 2144337920;
-let target, keysTarget;
-let targetView;
-let position = 0;
-let safeEnd;
-let bundledStrings = null;
-const MAX_BUNDLE_SIZE = 61440;
-const hasNonLatin = /[\u0080-\uFFFF]/;
-const RECORD_SYMBOL = Symbol("record-id");
-class Packr extends Unpackr {
-  constructor(options) {
-    super(options);
-    this.offset = 0;
-    let start;
-    let hasSharedUpdate;
-    let structures;
-    let referenceMap2;
-    let lastSharedStructuresLength = 0;
-    let encodeUtf8 = ByteArray.prototype.utf8Write ? function(string, position2, maxBytes) {
-      return target.utf8Write(string, position2, maxBytes);
-    } : textEncoder && textEncoder.encodeInto ? function(string, position2) {
-      return textEncoder.encodeInto(string, target.subarray(position2)).written;
-    } : false;
-    let packr = this;
-    if (!options)
-      options = {};
-    let isSequential = options && options.sequential;
-    let hasSharedStructures = options.structures || options.saveStructures;
-    let maxSharedStructures = options.maxSharedStructures;
-    if (maxSharedStructures == null)
-      maxSharedStructures = hasSharedStructures ? 32 : 0;
-    if (maxSharedStructures > 8160)
-      throw new Error("Maximum maxSharedStructure is 8160");
-    let maxOwnStructures = options.maxOwnStructures;
-    if (maxOwnStructures == null)
-      maxOwnStructures = hasSharedStructures ? 32 : 64;
-    if (!this.structures && options.useRecords != false)
-      this.structures = [];
-    let useTwoByteRecords = maxSharedStructures > 32 || maxOwnStructures + maxSharedStructures > 64;
-    let sharedLimitId = maxSharedStructures + 64;
-    let maxStructureId = maxSharedStructures + maxOwnStructures + 64;
-    if (maxStructureId > 8256) {
-      throw new Error("Maximum maxSharedStructure + maxOwnStructure is 8192");
-    }
-    let recordIdsToRemove = [];
-    let transitionsCount = 0;
-    let serializationsSinceTransitionRebuild = 0;
-    this.pack = this.encode = function(value, encodeOptions) {
-      if (!target) {
-        target = new ByteArrayAllocate(8192);
-        targetView = new DataView(target.buffer, 0, 8192);
-        position = 0;
-      }
-      safeEnd = target.length - 10;
-      if (safeEnd - position < 2048) {
-        target = new ByteArrayAllocate(target.length);
-        targetView = new DataView(target.buffer, 0, target.length);
-        safeEnd = target.length - 10;
-        position = 0;
-      } else
-        position = position + 7 & 2147483640;
-      start = position;
-      referenceMap2 = packr.structuredClone ? /* @__PURE__ */ new Map() : null;
-      if (packr.bundleStrings && typeof value !== "string") {
-        bundledStrings = [];
-        bundledStrings.size = Infinity;
-      } else
-        bundledStrings = null;
-      structures = packr.structures;
-      if (structures) {
-        if (structures.uninitialized)
-          structures = packr._mergeStructures(packr.getStructures());
-        let sharedLength = structures.sharedLength || 0;
-        if (sharedLength > maxSharedStructures) {
-          throw new Error("Shared structures is larger than maximum shared structures, try increasing maxSharedStructures to " + structures.sharedLength);
-        }
-        if (!structures.transitions) {
-          structures.transitions = /* @__PURE__ */ Object.create(null);
-          for (let i = 0; i < sharedLength; i++) {
-            let keys2 = structures[i];
-            if (!keys2)
-              continue;
-            let nextTransition, transition = structures.transitions;
-            for (let j = 0, l = keys2.length; j < l; j++) {
-              let key = keys2[j];
-              nextTransition = transition[key];
-              if (!nextTransition) {
-                nextTransition = transition[key] = /* @__PURE__ */ Object.create(null);
-              }
-              transition = nextTransition;
-            }
-            transition[RECORD_SYMBOL] = i + 64;
-          }
-          lastSharedStructuresLength = sharedLength;
-        }
-        if (!isSequential) {
-          structures.nextId = sharedLength + 64;
-        }
-      }
-      if (hasSharedUpdate)
-        hasSharedUpdate = false;
-      try {
-        pack(value);
-        if (bundledStrings) {
-          writeBundles(start, pack);
-        }
-        packr.offset = position;
-        if (referenceMap2 && referenceMap2.idsToInsert) {
-          position += referenceMap2.idsToInsert.length * 6;
-          if (position > safeEnd)
-            makeRoom(position);
-          packr.offset = position;
-          let serialized = insertIds(target.subarray(start, position), referenceMap2.idsToInsert);
-          referenceMap2 = null;
-          return serialized;
-        }
-        if (encodeOptions & REUSE_BUFFER_MODE) {
-          target.start = start;
-          target.end = position;
-          return target;
-        }
-        return target.subarray(start, position);
-      } finally {
-        if (structures) {
-          if (serializationsSinceTransitionRebuild < 10)
-            serializationsSinceTransitionRebuild++;
-          let sharedLength = structures.sharedLength || maxSharedStructures;
-          if (structures.length > sharedLength)
-            structures.length = sharedLength;
-          if (transitionsCount > 1e4) {
-            structures.transitions = null;
-            serializationsSinceTransitionRebuild = 0;
-            transitionsCount = 0;
-            if (recordIdsToRemove.length > 0)
-              recordIdsToRemove = [];
-          } else if (recordIdsToRemove.length > 0 && !isSequential) {
-            for (let i = 0, l = recordIdsToRemove.length; i < l; i++) {
-              recordIdsToRemove[i][RECORD_SYMBOL] = 0;
-            }
-            recordIdsToRemove = [];
-          }
-          if (hasSharedUpdate && packr.saveStructures) {
-            let returnBuffer = target.subarray(start, position);
-            if (packr.saveStructures(structures, lastSharedStructuresLength) === false) {
-              packr._mergeStructures(packr.getStructures());
-              return packr.pack(value);
-            }
-            lastSharedStructuresLength = sharedLength;
-            return returnBuffer;
-          }
-        }
-        if (encodeOptions & RESET_BUFFER_MODE)
-          position = start;
-      }
-    };
-    const pack = (value) => {
-      if (position > safeEnd)
-        target = makeRoom(position);
-      var type2 = typeof value;
-      var length;
-      if (type2 === "string") {
-        let strLength = value.length;
-        if (bundledStrings && strLength >= 4 && strLength < 4096) {
-          if ((bundledStrings.size += strLength) > MAX_BUNDLE_SIZE) {
-            let extStart;
-            let maxBytes2 = (bundledStrings[0] ? bundledStrings[0].length * 3 + bundledStrings[1].length : 0) + 10;
-            if (position + maxBytes2 > safeEnd)
-              target = makeRoom(position + maxBytes2);
-            if (bundledStrings.position) {
-              target[position] = 200;
-              position += 3;
-              target[position++] = 98;
-              extStart = position - start;
-              position += 4;
-              writeBundles(start, pack);
-              targetView.setUint16(extStart + start - 3, position - start - extStart);
-            } else {
-              target[position++] = 214;
-              target[position++] = 98;
-              extStart = position - start;
-              position += 4;
-            }
-            bundledStrings = ["", ""];
-            bundledStrings.size = 0;
-            bundledStrings.position = extStart;
-          }
-          let twoByte = hasNonLatin.test(value);
-          bundledStrings[twoByte ? 0 : 1] += value;
-          target[position++] = 193;
-          pack(twoByte ? -strLength : strLength);
-          return;
-        }
-        let headerSize;
-        if (strLength < 32) {
-          headerSize = 1;
-        } else if (strLength < 256) {
-          headerSize = 2;
-        } else if (strLength < 65536) {
-          headerSize = 3;
-        } else {
-          headerSize = 5;
-        }
-        let maxBytes = strLength * 3;
-        if (position + maxBytes > safeEnd)
-          target = makeRoom(position + maxBytes);
-        if (strLength < 64 || !encodeUtf8) {
-          let i, c1, c2, strPosition = position + headerSize;
-          for (i = 0; i < strLength; i++) {
-            c1 = value.charCodeAt(i);
-            if (c1 < 128) {
-              target[strPosition++] = c1;
-            } else if (c1 < 2048) {
-              target[strPosition++] = c1 >> 6 | 192;
-              target[strPosition++] = c1 & 63 | 128;
-            } else if ((c1 & 64512) === 55296 && ((c2 = value.charCodeAt(i + 1)) & 64512) === 56320) {
-              c1 = 65536 + ((c1 & 1023) << 10) + (c2 & 1023);
-              i++;
-              target[strPosition++] = c1 >> 18 | 240;
-              target[strPosition++] = c1 >> 12 & 63 | 128;
-              target[strPosition++] = c1 >> 6 & 63 | 128;
-              target[strPosition++] = c1 & 63 | 128;
-            } else {
-              target[strPosition++] = c1 >> 12 | 224;
-              target[strPosition++] = c1 >> 6 & 63 | 128;
-              target[strPosition++] = c1 & 63 | 128;
-            }
-          }
-          length = strPosition - position - headerSize;
-        } else {
-          length = encodeUtf8(value, position + headerSize, maxBytes);
-        }
-        if (length < 32) {
-          target[position++] = 160 | length;
-        } else if (length < 256) {
-          if (headerSize < 2) {
-            target.copyWithin(position + 2, position + 1, position + 1 + length);
-          }
-          target[position++] = 217;
-          target[position++] = length;
-        } else if (length < 65536) {
-          if (headerSize < 3) {
-            target.copyWithin(position + 3, position + 2, position + 2 + length);
-          }
-          target[position++] = 218;
-          target[position++] = length >> 8;
-          target[position++] = length & 255;
-        } else {
-          if (headerSize < 5) {
-            target.copyWithin(position + 5, position + 3, position + 3 + length);
-          }
-          target[position++] = 219;
-          targetView.setUint32(position, length);
-          position += 4;
-        }
-        position += length;
-      } else if (type2 === "number") {
-        if (value >>> 0 === value) {
-          if (value < 64) {
-            target[position++] = value;
-          } else if (value < 256) {
-            target[position++] = 204;
-            target[position++] = value;
-          } else if (value < 65536) {
-            target[position++] = 205;
-            target[position++] = value >> 8;
-            target[position++] = value & 255;
-          } else {
-            target[position++] = 206;
-            targetView.setUint32(position, value);
-            position += 4;
-          }
-        } else if (value >> 0 === value) {
-          if (value >= -32) {
-            target[position++] = 256 + value;
-          } else if (value >= -128) {
-            target[position++] = 208;
-            target[position++] = value + 256;
-          } else if (value >= -32768) {
-            target[position++] = 209;
-            targetView.setInt16(position, value);
-            position += 2;
-          } else {
-            target[position++] = 210;
-            targetView.setInt32(position, value);
-            position += 4;
-          }
-        } else {
-          let useFloat32;
-          if ((useFloat32 = this.useFloat32) > 0 && value < 4294967296 && value >= -2147483648) {
-            target[position++] = 202;
-            targetView.setFloat32(position, value);
-            let xShifted;
-            if (useFloat32 < 4 || (xShifted = value * mult10[(target[position] & 127) << 1 | target[position + 1] >> 7]) >> 0 === xShifted) {
-              position += 4;
-              return;
-            } else
-              position--;
-          }
-          target[position++] = 203;
-          targetView.setFloat64(position, value);
-          position += 8;
-        }
-      } else if (type2 === "object") {
-        if (!value)
-          target[position++] = 192;
-        else {
-          if (referenceMap2) {
-            let referee = referenceMap2.get(value);
-            if (referee) {
-              if (!referee.id) {
-                let idsToInsert = referenceMap2.idsToInsert || (referenceMap2.idsToInsert = []);
-                referee.id = idsToInsert.push(referee);
-              }
-              target[position++] = 214;
-              target[position++] = 112;
-              targetView.setUint32(position, referee.id);
-              position += 4;
-              return;
-            } else
-              referenceMap2.set(value, { offset: position - start });
-          }
-          let constructor = value.constructor;
-          if (constructor === Object) {
-            writeObject(value, true);
-          } else if (constructor === Array) {
-            length = value.length;
-            if (length < 16) {
-              target[position++] = 144 | length;
-            } else if (length < 65536) {
-              target[position++] = 220;
-              target[position++] = length >> 8;
-              target[position++] = length & 255;
-            } else {
-              target[position++] = 221;
-              targetView.setUint32(position, length);
-              position += 4;
-            }
-            for (let i = 0; i < length; i++) {
-              pack(value[i]);
-            }
-          } else if (constructor === Map) {
-            length = value.size;
-            if (length < 16) {
-              target[position++] = 128 | length;
-            } else if (length < 65536) {
-              target[position++] = 222;
-              target[position++] = length >> 8;
-              target[position++] = length & 255;
-            } else {
-              target[position++] = 223;
-              targetView.setUint32(position, length);
-              position += 4;
-            }
-            for (let [key, entryValue] of value) {
-              pack(key);
-              pack(entryValue);
-            }
-          } else {
-            for (let i = 0, l = extensions.length; i < l; i++) {
-              let extensionClass = extensionClasses[i];
-              if (value instanceof extensionClass) {
-                let extension = extensions[i];
-                if (extension.write) {
-                  if (extension.type) {
-                    target[position++] = 212;
-                    target[position++] = extension.type;
-                    target[position++] = 0;
-                  }
-                  pack(extension.write.call(this, value));
-                  return;
-                }
-                let currentTarget = target;
-                let currentTargetView = targetView;
-                let currentPosition = position;
-                target = null;
-                let result;
-                try {
-                  result = extension.pack.call(this, value, (size2) => {
-                    target = currentTarget;
-                    currentTarget = null;
-                    position += size2;
-                    if (position > safeEnd)
-                      makeRoom(position);
-                    return {
-                      target,
-                      targetView,
-                      position: position - size2
-                    };
-                  }, pack);
-                } finally {
-                  if (currentTarget) {
-                    target = currentTarget;
-                    targetView = currentTargetView;
-                    position = currentPosition;
-                    safeEnd = target.length - 10;
-                  }
-                }
-                if (result) {
-                  if (result.length + position > safeEnd)
-                    makeRoom(result.length + position);
-                  position = writeExtensionData(result, target, position, extension.type);
-                }
-                return;
-              }
-            }
-            writeObject(value, !value.hasOwnProperty);
-          }
-        }
-      } else if (type2 === "boolean") {
-        target[position++] = value ? 195 : 194;
-      } else if (type2 === "bigint") {
-        if (value < BigInt(1) << BigInt(63) && value >= -(BigInt(1) << BigInt(63))) {
-          target[position++] = 211;
-          targetView.setBigInt64(position, value);
-        } else if (value < BigInt(1) << BigInt(64) && value > 0) {
-          target[position++] = 207;
-          targetView.setBigUint64(position, value);
-        } else {
-          if (this.largeBigIntToFloat) {
-            target[position++] = 203;
-            targetView.setFloat64(position, Number(value));
-          } else {
-            throw new RangeError(value + " was too large to fit in MessagePack 64-bit integer format, set largeBigIntToFloat to convert to float-64");
-          }
-        }
-        position += 8;
-      } else if (type2 === "undefined") {
-        if (this.encodeUndefinedAsNil)
-          target[position++] = 192;
-        else {
-          target[position++] = 212;
-          target[position++] = 0;
-          target[position++] = 0;
-        }
-      } else if (type2 === "function") {
-        pack(this.writeFunction && this.writeFunction());
-      } else {
-        throw new Error("Unknown type: " + type2);
-      }
-    };
-    const writeObject = this.useRecords === false ? this.variableMapSize ? (object) => {
-      let keys2 = Object.keys(object);
-      let length = keys2.length;
-      if (length < 16) {
-        target[position++] = 128 | length;
-      } else if (length < 65536) {
-        target[position++] = 222;
-        target[position++] = length >> 8;
-        target[position++] = length & 255;
-      } else {
-        target[position++] = 223;
-        targetView.setUint32(position, length);
-        position += 4;
-      }
-      let key;
-      for (let i = 0; i < length; i++) {
-        pack(key = keys2[i]);
-        pack(object[key]);
-      }
-    } : (object, safePrototype) => {
-      target[position++] = 222;
-      let objectOffset = position - start;
-      position += 2;
-      let size2 = 0;
-      for (let key in object) {
-        if (safePrototype || object.hasOwnProperty(key)) {
-          pack(key);
-          pack(object[key]);
-          size2++;
-        }
-      }
-      target[objectOffset++ + start] = size2 >> 8;
-      target[objectOffset + start] = size2 & 255;
-    } : options.progressiveRecords && !useTwoByteRecords ? (object, safePrototype) => {
-      let nextTransition, transition = structures.transitions || (structures.transitions = /* @__PURE__ */ Object.create(null));
-      let objectOffset = position++ - start;
-      let wroteKeys;
-      for (let key in object) {
-        if (safePrototype || object.hasOwnProperty(key)) {
-          nextTransition = transition[key];
-          if (nextTransition)
-            transition = nextTransition;
-          else {
-            let keys2 = Object.keys(object);
-            let lastTransition = transition;
-            transition = structures.transitions;
-            let newTransitions = 0;
-            for (let i = 0, l = keys2.length; i < l; i++) {
-              let key2 = keys2[i];
-              nextTransition = transition[key2];
-              if (!nextTransition) {
-                nextTransition = transition[key2] = /* @__PURE__ */ Object.create(null);
-                newTransitions++;
-              }
-              transition = nextTransition;
-            }
-            if (objectOffset + start + 1 == position) {
-              position--;
-              newRecord(transition, keys2, newTransitions);
-            } else
-              insertNewRecord(transition, keys2, objectOffset, newTransitions);
-            wroteKeys = true;
-            transition = lastTransition[key];
-          }
-          pack(object[key]);
-        }
-      }
-      if (!wroteKeys) {
-        let recordId = transition[RECORD_SYMBOL];
-        if (recordId)
-          target[objectOffset + start] = recordId;
-        else
-          insertNewRecord(transition, Object.keys(object), objectOffset, 0);
-      }
-    } : (object, safePrototype) => {
-      let nextTransition, transition = structures.transitions || (structures.transitions = /* @__PURE__ */ Object.create(null));
-      let newTransitions = 0;
-      for (let key in object)
-        if (safePrototype || object.hasOwnProperty(key)) {
-          nextTransition = transition[key];
-          if (!nextTransition) {
-            nextTransition = transition[key] = /* @__PURE__ */ Object.create(null);
-            newTransitions++;
-          }
-          transition = nextTransition;
-        }
-      let recordId = transition[RECORD_SYMBOL];
-      if (recordId) {
-        if (recordId >= 96 && useTwoByteRecords) {
-          target[position++] = ((recordId -= 96) & 31) + 96;
-          target[position++] = recordId >> 5;
-        } else
-          target[position++] = recordId;
-      } else {
-        newRecord(transition, transition.__keys__ || Object.keys(object), newTransitions);
-      }
-      for (let key in object)
-        if (safePrototype || object.hasOwnProperty(key))
-          pack(object[key]);
-    };
-    const makeRoom = (end) => {
-      let newSize;
-      if (end > 16777216) {
-        if (end - start > MAX_BUFFER_SIZE)
-          throw new Error("Packed buffer would be larger than maximum buffer size");
-        newSize = Math.min(MAX_BUFFER_SIZE, Math.round(Math.max((end - start) * (end > 67108864 ? 1.25 : 2), 4194304) / 4096) * 4096);
-      } else
-        newSize = (Math.max(end - start << 2, target.length - 1) >> 12) + 1 << 12;
-      let newBuffer = new ByteArrayAllocate(newSize);
-      targetView = new DataView(newBuffer.buffer, 0, newSize);
-      if (target.copy)
-        target.copy(newBuffer, 0, start, end);
-      else
-        newBuffer.set(target.slice(start, end));
-      position -= start;
-      start = 0;
-      safeEnd = newBuffer.length - 10;
-      return target = newBuffer;
-    };
-    const newRecord = (transition, keys2, newTransitions) => {
-      let recordId = structures.nextId;
-      if (!recordId)
-        recordId = 64;
-      if (recordId < sharedLimitId && this.shouldShareStructure && !this.shouldShareStructure(keys2)) {
-        recordId = structures.nextOwnId;
-        if (!(recordId < maxStructureId))
-          recordId = sharedLimitId;
-        structures.nextOwnId = recordId + 1;
-      } else {
-        if (recordId >= maxStructureId)
-          recordId = sharedLimitId;
-        structures.nextId = recordId + 1;
-      }
-      let highByte = keys2.highByte = recordId >= 96 && useTwoByteRecords ? recordId - 96 >> 5 : -1;
-      transition[RECORD_SYMBOL] = recordId;
-      transition.__keys__ = keys2;
-      structures[recordId - 64] = keys2;
-      if (recordId < sharedLimitId) {
-        keys2.isShared = true;
-        structures.sharedLength = recordId - 63;
-        hasSharedUpdate = true;
-        if (highByte >= 0) {
-          target[position++] = (recordId & 31) + 96;
-          target[position++] = highByte;
-        } else {
-          target[position++] = recordId;
-        }
-      } else {
-        if (highByte >= 0) {
-          target[position++] = 213;
-          target[position++] = 114;
-          target[position++] = (recordId & 31) + 96;
-          target[position++] = highByte;
-        } else {
-          target[position++] = 212;
-          target[position++] = 114;
-          target[position++] = recordId;
-        }
-        if (newTransitions)
-          transitionsCount += serializationsSinceTransitionRebuild * newTransitions;
-        if (recordIdsToRemove.length >= maxOwnStructures)
-          recordIdsToRemove.shift()[RECORD_SYMBOL] = 0;
-        recordIdsToRemove.push(transition);
-        pack(keys2);
-      }
-    };
-    const insertNewRecord = (transition, keys2, insertionOffset, newTransitions) => {
-      let mainTarget = target;
-      let mainPosition = position;
-      let mainSafeEnd = safeEnd;
-      let mainStart = start;
-      target = keysTarget;
-      position = 0;
-      start = 0;
-      if (!target)
-        keysTarget = target = new ByteArrayAllocate(8192);
-      safeEnd = target.length - 10;
-      newRecord(transition, keys2, newTransitions);
-      keysTarget = target;
-      let keysPosition = position;
-      target = mainTarget;
-      position = mainPosition;
-      safeEnd = mainSafeEnd;
-      start = mainStart;
-      if (keysPosition > 1) {
-        let newEnd = position + keysPosition - 1;
-        if (newEnd > safeEnd)
-          makeRoom(newEnd);
-        let insertionPosition = insertionOffset + start;
-        target.copyWithin(insertionPosition + keysPosition, insertionPosition + 1, position);
-        target.set(keysTarget.slice(0, keysPosition), insertionPosition);
-        position = newEnd;
-      } else {
-        target[insertionOffset + start] = keysTarget[0];
-      }
-    };
-  }
-  useBuffer(buffer) {
-    target = buffer;
-    targetView = new DataView(target.buffer, target.byteOffset, target.byteLength);
-    position = 0;
-  }
-  clearSharedData() {
-    if (this.structures)
-      this.structures = [];
-  }
-}
-extensionClasses = [Date, Set, Error, RegExp, ArrayBuffer, Object.getPrototypeOf(Uint8Array.prototype).constructor, C1Type];
-extensions = [{
-  pack(date, allocateForWrite, pack) {
-    let seconds = date.getTime() / 1e3;
-    if ((this.useTimestamp32 || date.getMilliseconds() === 0) && seconds >= 0 && seconds < 4294967296) {
-      let { target: target2, targetView: targetView2, position: position2 } = allocateForWrite(6);
-      target2[position2++] = 214;
-      target2[position2++] = 255;
-      targetView2.setUint32(position2, seconds);
-    } else if (seconds > 0 && seconds < 17179869184) {
-      let { target: target2, targetView: targetView2, position: position2 } = allocateForWrite(10);
-      target2[position2++] = 215;
-      target2[position2++] = 255;
-      targetView2.setUint32(position2, date.getMilliseconds() * 4e6 + (seconds / 1e3 / 4294967296 >> 0));
-      targetView2.setUint32(position2 + 4, seconds);
-    } else if (isNaN(seconds)) {
-      if (this.onInvalidDate) {
-        allocateForWrite(0);
-        return pack(this.onInvalidDate());
-      }
-      let { target: target2, targetView: targetView2, position: position2 } = allocateForWrite(3);
-      target2[position2++] = 212;
-      target2[position2++] = 255;
-      target2[position2++] = 255;
-    } else {
-      let { target: target2, targetView: targetView2, position: position2 } = allocateForWrite(15);
-      target2[position2++] = 199;
-      target2[position2++] = 12;
-      target2[position2++] = 255;
-      targetView2.setUint32(position2, date.getMilliseconds() * 1e6);
-      targetView2.setBigInt64(position2 + 4, BigInt(Math.floor(seconds)));
-    }
-  }
-}, {
-  pack(set, allocateForWrite, pack) {
-    let array = Array.from(set);
-    let { target: target2, position: position2 } = allocateForWrite(this.structuredClone ? 3 : 0);
-    if (this.structuredClone) {
-      target2[position2++] = 212;
-      target2[position2++] = 115;
-      target2[position2++] = 0;
-    }
-    pack(array);
-  }
-}, {
-  pack(error, allocateForWrite, pack) {
-    let { target: target2, position: position2 } = allocateForWrite(this.structuredClone ? 3 : 0);
-    if (this.structuredClone) {
-      target2[position2++] = 212;
-      target2[position2++] = 101;
-      target2[position2++] = 0;
-    }
-    pack([error.name, error.message]);
-  }
-}, {
-  pack(regex, allocateForWrite, pack) {
-    let { target: target2, position: position2 } = allocateForWrite(this.structuredClone ? 3 : 0);
-    if (this.structuredClone) {
-      target2[position2++] = 212;
-      target2[position2++] = 120;
-      target2[position2++] = 0;
-    }
-    pack([regex.source, regex.flags]);
-  }
-}, {
-  pack(arrayBuffer, allocateForWrite) {
-    if (this.structuredClone)
-      writeExtBuffer(arrayBuffer, 16, allocateForWrite);
-    else
-      writeBuffer(hasNodeBuffer ? Buffer.from(arrayBuffer) : new Uint8Array(arrayBuffer), allocateForWrite);
-  }
-}, {
-  pack(typedArray, allocateForWrite) {
-    let constructor = typedArray.constructor;
-    if (constructor !== ByteArray && this.structuredClone)
-      writeExtBuffer(typedArray, typedArrays.indexOf(constructor.name), allocateForWrite);
-    else
-      writeBuffer(typedArray, allocateForWrite);
-  }
-}, {
-  pack(c1, allocateForWrite) {
-    let { target: target2, position: position2 } = allocateForWrite(1);
-    target2[position2] = 193;
-  }
-}];
-function writeExtBuffer(typedArray, type2, allocateForWrite, encode) {
-  let length = typedArray.byteLength;
-  if (length + 1 < 256) {
-    var { target: target2, position: position2 } = allocateForWrite(4 + length);
-    target2[position2++] = 199;
-    target2[position2++] = length + 1;
-  } else if (length + 1 < 65536) {
-    var { target: target2, position: position2 } = allocateForWrite(5 + length);
-    target2[position2++] = 200;
-    target2[position2++] = length + 1 >> 8;
-    target2[position2++] = length + 1 & 255;
-  } else {
-    var { target: target2, position: position2, targetView: targetView2 } = allocateForWrite(7 + length);
-    target2[position2++] = 201;
-    targetView2.setUint32(position2, length + 1);
-    position2 += 4;
-  }
-  target2[position2++] = 116;
-  target2[position2++] = type2;
-  target2.set(new Uint8Array(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength), position2);
-}
-function writeBuffer(buffer, allocateForWrite) {
-  let length = buffer.byteLength;
-  var target2, position2;
-  if (length < 256) {
-    var { target: target2, position: position2 } = allocateForWrite(length + 2);
-    target2[position2++] = 196;
-    target2[position2++] = length;
-  } else if (length < 65536) {
-    var { target: target2, position: position2 } = allocateForWrite(length + 3);
-    target2[position2++] = 197;
-    target2[position2++] = length >> 8;
-    target2[position2++] = length & 255;
-  } else {
-    var { target: target2, position: position2, targetView: targetView2 } = allocateForWrite(length + 5);
-    target2[position2++] = 198;
-    targetView2.setUint32(position2, length);
-    position2 += 4;
-  }
-  target2.set(buffer, position2);
-}
-function writeExtensionData(result, target2, position2, type2) {
-  let length = result.length;
-  switch (length) {
-    case 1:
-      target2[position2++] = 212;
-      break;
-    case 2:
-      target2[position2++] = 213;
-      break;
-    case 4:
-      target2[position2++] = 214;
-      break;
-    case 8:
-      target2[position2++] = 215;
-      break;
-    case 16:
-      target2[position2++] = 216;
-      break;
-    default:
-      if (length < 256) {
-        target2[position2++] = 199;
-        target2[position2++] = length;
-      } else if (length < 65536) {
-        target2[position2++] = 200;
-        target2[position2++] = length >> 8;
-        target2[position2++] = length & 255;
-      } else {
-        target2[position2++] = 201;
-        target2[position2++] = length >> 24;
-        target2[position2++] = length >> 16 & 255;
-        target2[position2++] = length >> 8 & 255;
-        target2[position2++] = length & 255;
-      }
-  }
-  target2[position2++] = type2;
-  target2.set(result, position2);
-  position2 += length;
-  return position2;
-}
-function insertIds(serialized, idsToInsert) {
-  let nextId;
-  let distanceToMove = idsToInsert.length * 6;
-  let lastEnd = serialized.length - distanceToMove;
-  idsToInsert.sort((a, b) => a.offset > b.offset ? 1 : -1);
-  while (nextId = idsToInsert.pop()) {
-    let offset = nextId.offset;
-    let id = nextId.id;
-    serialized.copyWithin(offset + distanceToMove, offset, lastEnd);
-    distanceToMove -= 6;
-    let position2 = offset + distanceToMove;
-    serialized[position2++] = 214;
-    serialized[position2++] = 105;
-    serialized[position2++] = id >> 24;
-    serialized[position2++] = id >> 16 & 255;
-    serialized[position2++] = id >> 8 & 255;
-    serialized[position2++] = id & 255;
-    lastEnd = offset;
-  }
-  return serialized;
-}
-function writeBundles(start, pack) {
-  targetView.setUint32(bundledStrings.position + start, position - bundledStrings.position - start);
-  let writeStrings = bundledStrings;
-  bundledStrings = null;
-  pack(writeStrings[0]);
-  pack(writeStrings[1]);
-}
-let defaultPackr = new Packr({ useRecords: false });
-defaultPackr.pack;
-defaultPackr.pack;
-const REUSE_BUFFER_MODE = 512;
-const RESET_BUFFER_MODE = 1024;
 new Vector3();
 new Vector3();
+export { popScopeId as a, pushScopeId as p };
