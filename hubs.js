@@ -23,7 +23,7 @@ var room = `
     background-color: black; 
  }
 #room.darkwall {
-    background-color: transparent;  
+    background-color: transparent;
 }
 #room.lightwall {
     background-color: transparent;  
